@@ -69,6 +69,11 @@ const ManagementIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
   </svg>
 );
+const AgentIcon = () => (
+  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+  </svg>
+);
 
 // ─── Management dropdown sub-items ──────────────────────────────
 const MANAGEMENT_ITEMS = [
@@ -150,6 +155,7 @@ export default function Sidebar() {
             <NavItem path="/designers"   label="Designers"     icon={<DesignersIcon />} />
             <NavItem path="/upload"      label="Upload Portal" icon={<UploadIcon />} />
             <NavItem path="/pipeline"    label="Publish"       icon={<PublishIcon />} />
+            <NavItem path="/agent"       label="AI Agent"      icon={<AgentIcon />} />
             <ManagementGroup />
             <NavItem path="/payments"    label="Payments"      icon={<PaymentsIcon />} />
             <NavItem path="/archive"     label="Archive"       icon={<ArchiveIcon />} />
