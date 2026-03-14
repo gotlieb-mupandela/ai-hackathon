@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
-  analyzePage,
   getPages,
   insertPage,
-  updatePage,
   deletePage,
   uploadToStorage,
   getOrCreateTodayEdition,
@@ -37,19 +35,6 @@ function extractPageNumberFromFilename(filename) {
   return null;
 }
 
-const STATUS_COLORS = {
-  uploaded: 'var(--text-muted)',
-  analysing: 'var(--warning, #f59e0b)',
-  analysed: 'var(--success)',
-  error: 'var(--error)',
-};
-
-const STATUS_LABELS = {
-  uploaded: 'Uploaded',
-  analysing: 'Analysing…',
-  analysed: 'Analysed',
-  error: 'Error',
-};
 
 function getTodayStr() {
   const d = new Date();
@@ -64,7 +49,6 @@ export default function Upload() {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState({});
   const [toast, setToast] = useState(null);
-  const [reanalyzing, setReanalyzing] = useState(false);
   const pollRef = useRef(null);
   const todayStr = getTodayStr();
 
@@ -113,60 +97,24 @@ export default function Upload() {
         const storagePath = `${todayStr}/${file.name}`;
         await uploadToStorage('Upload', storagePath, file);
 
-        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'saved' }));
-        const pageRecord = await insertPage({
+        // Extract page number from filename if possible (e.g. NE_20260302_05.pdf → 5)
+        const filenamePageNum = extractPageNumberFromFilename(file.name);
+
+        await insertPage({
           edition_date: todayStr,
           filename: file.name,
           storage_path: storagePath,
+          page_number: filenamePageNum,
           status: 'uploaded',
           uploaded_by: user?.email || 'unknown',
         });
-
-        // Check if page number is already in the filename (e.g. NE_20260302_05.pdf → 5)
-        const filenamePageNum = extractPageNumberFromFilename(file.name);
-
-        if (filenamePageNum != null) {
-          // Page number found in filename — save immediately, skip AI vision call
-          await updatePage(pageRecord.id, {
-            page_number: filenamePageNum,
-            section: null,
-            headline: null,
-            tags: [],
-            status: 'analysed',
-          });
-          showToast(`${file.name} → page ${filenamePageNum} (from filename)`, 'success');
-        } else {
-          // No page number in filename — call AI vision to extract it
-          setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
-          try {
-            const analysis = await analyzePage(file);
-            await updatePage(pageRecord.id, {
-              page_number: analysis.page_number,
-              section: analysis.section,
-              headline: analysis.headline,
-              tags: analysis.tags,
-              status: 'analysed',
-            });
-            showToast(`${file.name} analysed → page ${analysis.page_number}`, 'success');
-          } catch (analyzeErr) {
-            console.error('Analysis failed:', analyzeErr);
-            await updatePage(pageRecord.id, { status: 'error' });
-            const isNetworkError = analyzeErr.code === 'ERR_NETWORK' ||
-              analyzeErr.message?.includes('Network Error') ||
-              analyzeErr.message?.includes('ECONNREFUSED');
-            if (isNetworkError) {
-              showToast(`${file.name} uploaded but analysis failed — is backend running?`, 'error');
-            } else {
-              showToast(`${file.name} analysis failed: ${analyzeErr.message}`, 'error');
-            }
-          }
-        }
 
         setUploadingFiles((prev) => {
           const next = { ...prev };
           delete next[file.name];
           return next;
         });
+        showToast(`${file.name} uploaded${filenamePageNum != null ? ` (page ${filenamePageNum})` : ''}`, 'success');
       } catch (err) {
         setUploadingFiles((prev) => {
           const next = { ...prev };
@@ -217,47 +165,6 @@ export default function Upload() {
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch {
       showToast('Failed to save settings', 'error');
-    }
-  };
-
-  const handleReanalyzeAll = async () => {
-    if (reanalyzing || pages.length === 0) return;
-    setReanalyzing(true);
-    showToast(`Re-analyzing ${pages.length} pages in parallel…`, 'info');
-
-    const { downloadFromStorage } = await import('../api');
-    const results = await Promise.allSettled(
-      pages.map(async (page) => {
-        await updatePage(page.id, { status: 'analysing' });
-        const blob = await downloadFromStorage('Upload', page.storage_path);
-        const file = new File([blob], page.filename, { type: 'application/pdf' });
-        const analysis = await analyzePage(file);
-        await updatePage(page.id, {
-          page_number: analysis.page_number,
-          section: analysis.section,
-          headline: analysis.headline,
-          tags: analysis.tags,
-          status: 'analysed',
-        });
-      })
-    );
-
-    const done = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.filter((r) => r.status === 'rejected').length;
-
-    // Mark failed pages
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].status === 'rejected') {
-        await updatePage(pages[i].id, { status: 'error' }).catch(() => {});
-      }
-    }
-
-    setReanalyzing(false);
-    fetchPages();
-    if (failed > 0) {
-      showToast(`Done: ${done} analysed, ${failed} failed. Is the backend running?`, 'error');
-    } else {
-      showToast(`All ${done} pages re-analyzed in parallel`, 'success');
     }
   };
 
@@ -365,64 +272,23 @@ export default function Upload() {
         <div className="file-list-section">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
             <h2 className="section-title" style={{ margin: 0 }}>{isDesigner ? 'My Uploaded Pages' : 'Uploaded Pages'}</h2>
-            <button
-              onClick={handleReanalyzeAll}
-              disabled={reanalyzing}
-              style={{
-                background: reanalyzing ? '#6b7280' : 'linear-gradient(135deg, #7c3aed, #4f46e5)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '8px 18px',
-                fontWeight: '600',
-                fontSize: '13px',
-                cursor: reanalyzing ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '7px',
-              }}
-            >
-              {reanalyzing ? (
-                <><span className="spin" style={{ display: 'inline-block' }}>↻</span> Analyzing…</>
-              ) : (
-                <>↻ Re-Analyze All</>
-              )}
-            </button>
+            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{pages.length} pages</span>
           </div>
           <div className="file-list">
-            <div className="file-list-header">
+            <div className="file-list-header" style={{ gridTemplateColumns: '2fr 0.7fr 1fr 0.5fr' }}>
               <span>Filename</span>
               <span>Page #</span>
-              <span>Section</span>
-              <span>Headline</span>
               <span>Uploaded</span>
-              <span>Status</span>
               <span></span>
             </div>
             {pages.map((page, idx) => (
-              <div key={page.id || idx} className="file-list-row">
+              <div key={page.id || idx} className="file-list-row" style={{ gridTemplateColumns: '2fr 0.7fr 1fr 0.5fr' }}>
                 <span className="file-filename mono">{page.filename}</span>
                 <span className="file-page-num">
                   {page.page_number != null ? `p${page.page_number}` : '—'}
                 </span>
-                <span className="file-section">
-                  {page.section ? (
-                    <span className={`section-badge section-badge--${page.section?.toLowerCase().replace(/[^a-z0-9]/g, '')}`}>
-                      {page.section}
-                    </span>
-                  ) : '—'}
-                </span>
-                <span className="file-headline" title={page.headline}>
-                  {page.headline ? page.headline.substring(0, 50) + (page.headline.length > 50 ? '…' : '') : '—'}
-                </span>
                 <span className="file-time mono">
                   {page.uploaded_at ? new Date(page.uploaded_at).toLocaleTimeString() : '—'}
-                </span>
-                <span
-                  className="file-status"
-                  style={{ color: STATUS_COLORS[page.status] || 'var(--text-muted)' }}
-                >
-                  {STATUS_LABELS[page.status] || page.status || 'Pending'}
                 </span>
                 <button
                   className="file-delete-btn"
