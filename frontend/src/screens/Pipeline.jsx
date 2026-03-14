@@ -8,7 +8,7 @@ import {
   getOrCreateTodayEdition,
   analyzePage,
   updatePage,
-  deletePage,
+  deduplicatePages,
   notifySubscribers,
 } from '../api';
 import './Pipeline.css';
@@ -186,77 +186,23 @@ export default function Pipeline() {
       addLog('=== Pipeline started ===');
       addLog('Fetching uploaded pages...');
 
-      const allPages = await getPages(todayStr);
+      // Server-side deduplication — uses service role key to bypass RLS
+      addLog('Running server-side deduplication (bypasses RLS)...');
+      const dedupResult = await deduplicatePages(todayStr);
 
-      if (allPages.length === 0) {
+      if (dedupResult.removed?.length > 0) {
+        dedupResult.removed.forEach(r => addLog(`  [REMOVED] ${r.filename} (duplicate)`));
+        addLog(`Duplicates deleted: ${dedupResult.removed.length} removed (${dedupResult.total_before} → ${dedupResult.total_after})`);
+      }
+
+      const sortedPages = dedupResult.unique_pages || [];
+
+      if (sortedPages.length === 0) {
         addLog('[ERROR] No pages found. Upload PDF pages first.');
         updateStep(0, 'error');
         setIsRunning(false);
         return;
       }
-
-      // ── Deduplicate: remove exact filename duplicates and same-page-number duplicates ──
-      // For each group keep the most recently uploaded record; permanently delete the rest.
-      const seenFilenames = new Map();   // filename → best page record
-      const seenPageNumbers = new Map(); // page_number → best page record
-      const duplicatesToDelete = [];
-
-      // First pass — group by normalised filename (case-insensitive, trim spaces)
-      for (const page of allPages) {
-        const normName = (page.filename || '').toLowerCase().trim();
-        if (seenFilenames.has(normName)) {
-          const existing = seenFilenames.get(normName);
-          // Keep the most recently uploaded; mark the other for deletion
-          const keepPage = (page.uploaded_at || '') >= (existing.uploaded_at || '') ? page : existing;
-          const dropPage = keepPage === page ? existing : page;
-          seenFilenames.set(normName, keepPage);
-          duplicatesToDelete.push(dropPage);
-        } else {
-          seenFilenames.set(normName, page);
-        }
-      }
-
-      // Second pass — among survivors, deduplicate by resolved page number
-      const afterFilenameDedup = Array.from(seenFilenames.values());
-      for (const page of afterFilenameDedup) {
-        const num = extractPageNumberFromFilename(page.filename) ?? page.page_number;
-        if (num == null) {
-          // No page number — keep it, cannot reliably dedup
-          seenPageNumbers.set(`no-num-${page.id}`, page);
-          continue;
-        }
-        if (seenPageNumbers.has(num)) {
-          const existing = seenPageNumbers.get(num);
-          const keepPage = (page.uploaded_at || '') >= (existing.uploaded_at || '') ? page : existing;
-          const dropPage = keepPage === page ? existing : page;
-          seenPageNumbers.set(num, keepPage);
-          duplicatesToDelete.push(dropPage);
-        } else {
-          seenPageNumbers.set(num, page);
-        }
-      }
-
-      // Permanently delete duplicates from Supabase
-      if (duplicatesToDelete.length > 0) {
-        addLog(`Found ${duplicatesToDelete.length} duplicate page(s) — removing permanently...`);
-        await Promise.allSettled(
-          duplicatesToDelete.map(p => {
-            addLog(`  [REMOVED] ${p.filename} (duplicate)`);
-            return deletePage(p.id, p.storage_path);
-          })
-        );
-        addLog(`Duplicates removed. Proceeding with unique pages only.`);
-      }
-
-      const uniquePages = Array.from(seenPageNumbers.values());
-
-      // Sort by page number extracted from filename (most reliable), then by stored page_number
-      const sortedPages = [...uniquePages].sort((a, b) => {
-        const numA = extractPageNumberFromFilename(a.filename) ?? a.page_number ?? 9999;
-        const numB = extractPageNumberFromFilename(b.filename) ?? b.page_number ?? 9999;
-        if (numA !== numB) return numA - numB;
-        return (a.filename || '').localeCompare(b.filename || '');
-      });
 
       addLog(`${sortedPages.length} unique pages — order:`);
       sortedPages.forEach(p => {

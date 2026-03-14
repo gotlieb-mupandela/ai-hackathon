@@ -284,6 +284,134 @@ async def create_designer(body: CreateDesignerBody):
         raise HTTPException(status_code=500, detail=f"Could not create account: {exc}")
 
 
+# ─── Pipeline Deduplication Endpoint ────────────────────────
+
+class DeduplicateRequest(BaseModel):
+    date: str
+
+
+@app.post("/pipeline/deduplicate")
+async def pipeline_deduplicate(body: DeduplicateRequest):
+    """
+    Server-side deduplication using the service role key (bypasses RLS).
+    Fetches all pages for the given date, identifies duplicates by normalised
+    filename AND resolved page number, permanently deletes duplicates from
+    both the 'pages' table and the 'Upload' storage bucket, then returns
+    the surviving unique pages already sorted by page number.
+    """
+    import re
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=500, detail="Supabase service role key not configured")
+
+    supabase = _create_supabase_client(supabase_url, service_key)
+
+    # Fetch all pages for the date
+    result = supabase.table("pages").select("*").eq("edition_date", body.date).execute()
+    all_pages = result.data or []
+
+    if not all_pages:
+        return {"unique_pages": [], "removed": []}
+
+    def extract_page_number(filename: str):
+        """Return integer page number from filename, or None."""
+        if not filename:
+            return None
+        name = re.sub(r"\.pdf$", "", filename, flags=re.IGNORECASE).strip()
+        m = re.search(r"[_-](\d{1,3})(?:\s*\(\d+\))?$", name)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"page\s*(\d{1,3})", name, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"(?:^|\s)(\d{1,3})$", name)
+        if m:
+            return int(m.group(1))
+        return None
+
+    # ── Pass 1: deduplicate by normalised filename ──
+    seen_filenames: dict = {}  # norm_name → best page
+    for page in all_pages:
+        norm = (page.get("filename") or "").lower().strip()
+        existing = seen_filenames.get(norm)
+        if existing is None:
+            seen_filenames[norm] = page
+        else:
+            # Keep the most recently uploaded
+            keep = page if (page.get("uploaded_at") or "") >= (existing.get("uploaded_at") or "") else existing
+            drop = existing if keep is page else page
+            seen_filenames[norm] = keep
+            seen_filenames[f"__DROP__{drop['id']}"] = {"_drop": True, "page": drop}
+
+    survivors_after_filename = [
+        v for k, v in seen_filenames.items()
+        if not k.startswith("__DROP__")
+    ]
+    dropped_by_filename = [
+        v["page"] for k, v in seen_filenames.items()
+        if k.startswith("__DROP__")
+    ]
+
+    # ── Pass 2: deduplicate by resolved page number ──
+    seen_numbers: dict = {}    # page_num → best page
+    no_num_survivors = []
+    dropped_by_number = []
+
+    for page in survivors_after_filename:
+        num = extract_page_number(page.get("filename")) or page.get("page_number")
+        if num is None:
+            no_num_survivors.append(page)
+            continue
+        existing = seen_numbers.get(num)
+        if existing is None:
+            seen_numbers[num] = page
+        else:
+            keep = page if (page.get("uploaded_at") or "") >= (existing.get("uploaded_at") or "") else existing
+            drop = existing if keep is page else page
+            seen_numbers[num] = keep
+            dropped_by_number.append(drop)
+
+    all_duplicates = dropped_by_filename + dropped_by_number
+
+    # ── Permanently delete each duplicate ──
+    removed_records = []
+    for dup in all_duplicates:
+        page_id      = dup.get("id")
+        storage_path = dup.get("storage_path")
+        filename     = dup.get("filename", page_id)
+        try:
+            # Delete from storage bucket
+            if storage_path:
+                supabase.storage.from_("Upload").remove([storage_path])
+            # Delete from pages table
+            supabase.table("pages").delete().eq("id", page_id).execute()
+            removed_records.append({"id": page_id, "filename": filename})
+            logger.info("Duplicate removed: %s (id=%s)", filename, page_id)
+        except Exception as exc:
+            logger.warning("Could not delete duplicate %s: %s", filename, exc)
+
+    # ── Build sorted unique list ──
+    unique_pages = list(seen_numbers.values()) + no_num_survivors
+    unique_pages.sort(key=lambda p: (
+        extract_page_number(p.get("filename")) or p.get("page_number") or 9999,
+        p.get("filename") or ""
+    ))
+
+    logger.info(
+        "Deduplication for %s: %d total → %d unique, %d removed",
+        body.date, len(all_pages), len(unique_pages), len(removed_records)
+    )
+
+    return {
+        "unique_pages": unique_pages,
+        "removed": removed_records,
+        "total_before": len(all_pages),
+        "total_after": len(unique_pages),
+    }
+
+
 # ─── AI Agent Endpoint ──────────────────────────────────────
 
 class AgentQuery(BaseModel):

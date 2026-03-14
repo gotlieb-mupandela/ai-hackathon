@@ -30,6 +30,16 @@ export const analyzePage = async (file) => {
   return res.data;
 };
 
+/**
+ * Server-side deduplication — uses service role key to bypass RLS.
+ * Permanently deletes duplicate page records and their storage files.
+ * Returns { unique_pages, removed, total_before, total_after }
+ */
+export const deduplicatePages = async (date) => {
+  const res = await analyzer.post('/pipeline/deduplicate', { date });
+  return res.data;
+};
+
 // ─── WhatsApp Subscribers (Python backend) ──────────────────
 
 export const getSubscribers = async () => {
