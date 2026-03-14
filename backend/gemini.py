@@ -1,23 +1,21 @@
 """
-Gemini Vision integration for newspaper page analysis.
-Sends page images to Google Gemini 2.0 Flash and extracts structured metadata.
-Requires GEMINI_API_KEY in the environment.
+Vision analysis for newspaper page images via OpenRouter.
+Uses meta-llama/llama-3.2-11b-vision-instruct through the OpenRouter API.
+Falls back to Google Gemini if OPENROUTER_API_KEY is not set.
 """
 
+import base64
 import io
 import json
 import logging
 import os
 import re
 import time
-from pathlib import Path
 
-from google import genai
-from google.genai import types
+import requests
 from PIL import Image
 
 logger = logging.getLogger(__name__)
-
 
 
 ANALYSIS_PROMPT = """You are an AI assistant helping a Namibian newspaper called New Era automate their editorial workflow.
@@ -39,7 +37,7 @@ Extract the following four pieces of information:
    - "Business"  — economy, finance, companies, NAD/N$, markets, trade, investment
    - "Vibez!"    — entertainment, celebrities, music, fashion, lifestyle, arts, culture
    - "AgriToday" — farming, agriculture, livestock, crops, irrigation, rural development
-   
+
    IMPORTANT: These are the ONLY four valid sections. There is NO "News", "Politics" or any other section.
    If the content does not clearly fit one section, choose the closest match from the four above.
 
@@ -60,7 +58,6 @@ Respond with ONLY a valid JSON object. No markdown, no explanation, no extra tex
 
 VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday"}
 
-# Map common Gemini mis-spellings / variations back to the canonical section name
 SECTION_ALIASES = {
     "sport": "Sport",
     "sports": "Sport",
@@ -77,72 +74,179 @@ SECTION_ALIASES = {
     "agri": "AgriToday",
     "agriculture": "AgriToday",
     "farming": "AgriToday",
-    # Catch "News" being returned despite instructions
     "news": "Sport",
     "general": "Sport",
     "politics": "Sport",
     "national": "Sport",
 }
 
-_client: genai.Client | None = None
+# Gemini fallback client (only used when OpenRouter key is absent)
+_gemini_client = None
 
 
 def configure_gemini(api_key: str | None = None) -> None:
-    """Configure the Gemini API client. Uses api_key or GEMINI_API_KEY from env."""
-    global _client
+    """
+    Configure the fallback Gemini client.
+    Primary vision analysis now uses OpenRouter — Gemini is a fallback only.
+    """
+    global _gemini_client
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if openrouter_key:
+        logger.info(
+            "Vision analysis will use OpenRouter/%s",
+            os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct"),
+        )
+        return  # No need to set up Gemini
+
+    # No OpenRouter key — set up Gemini as fallback
     key = api_key or os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
-        logger.warning("GEMINI_API_KEY not set — vision analysis will fail until configured")
-        _client = None
+        logger.warning("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set — vision analysis will fail")
         return
     try:
-        _client = genai.Client(api_key=key)
-        logger.info("Gemini client configured for vision analysis")
+        from google import genai
+        _gemini_client = genai.Client(api_key=key)
+        logger.info("Gemini fallback client configured for vision analysis")
     except Exception as exc:
         logger.warning("Failed to create Gemini client: %s", exc)
-        _client = None
 
 
 def analyze_page(image_path: str, retries: int = 2) -> dict:
     """
-    Analyze a newspaper page image using the fastest available Gemini model.
-    Optimised for speed: lite models first, 2 retries, minimal sleep.
+    Analyze a newspaper page image.
+    Primary: OpenRouter vision model (meta-llama/llama-3.2-11b-vision-instruct).
+    Fallback: Google Gemini (if no OpenRouter key).
     """
-    if _client is None:
-        raise RuntimeError("Gemini client not configured — set GEMINI_API_KEY in .env")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+
+    if openrouter_key:
+        return _analyze_with_openrouter(image_path, openrouter_key, retries)
+    else:
+        return _analyze_with_gemini(image_path, retries)
+
+
+# ── OpenRouter vision analysis ──────────────────────────────────────────────
+
+def _analyze_with_openrouter(image_path: str, api_key: str, retries: int) -> dict:
+    """Send the page image to OpenRouter vision model and parse the JSON response."""
+    model = os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct")
+
+    # Load and optionally convert image to JPEG
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
+
+    mime_type = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    if mime_type == "image/png":
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode in ("P", "RGBA"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=70, optimize=True)
+        image_bytes = buf.getvalue()
+        mime_type = "image/jpeg"
+
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    data_url  = f"data:{mime_type};base64,{image_b64}"
+
+    logger.info("Sending page image to OpenRouter/%s (%d bytes)", model, len(image_bytes))
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": ANALYSIS_PROMPT},
+                ],
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 300,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://newera-editorial.app",
+        "X-Title": "NewEra Editorial Vision",
+    }
+
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            raw_text = resp.json()["choices"][0]["message"]["content"].strip()
+
+            if not raw_text:
+                raise ValueError("Empty response from OpenRouter")
+
+            # Strip markdown fences if present
+            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+            raw_text = re.sub(r"\s*```$", "", raw_text)
+            json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if json_match:
+                raw_text = json_match.group(0)
+
+            data   = json.loads(raw_text)
+            result = _validate_and_normalise(data, image_path)
+            logger.info("Vision analysis succeeded with OpenRouter/%s (attempt %d)", model, attempt + 1)
+            return result
+
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            logger.warning("Non-JSON from OpenRouter attempt %d: %s", attempt + 1, exc)
+            if attempt < retries - 1:
+                time.sleep(1)
+        except Exception as exc:
+            last_error = exc
+            logger.error("OpenRouter vision error attempt %d: %s", attempt + 1, exc)
+            if attempt < retries - 1:
+                time.sleep(1)
+
+    raise RuntimeError(f"OpenRouter vision analysis failed after {retries} attempts. Last error: {last_error}")
+
+
+# ── Gemini fallback ─────────────────────────────────────────────────────────
+
+def _analyze_with_gemini(image_path: str, retries: int) -> dict:
+    """Fallback: analyze using Google Gemini when OpenRouter key is not set."""
+    if _gemini_client is None:
+        raise RuntimeError(
+            "No vision model configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY in .env"
+        )
+
+    from google.genai import types
 
     with open(image_path, "rb") as f:
         image_bytes = f.read()
 
-    mime_type = "image/jpeg" if image_path.lower().endswith(('.jpg', '.jpeg')) else "image/png"
-
+    mime_type = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
     if mime_type == "image/png":
-        image = Image.open(io.BytesIO(image_bytes))
-        if image.mode == "P":
-            image = image.convert("RGB")
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode == "P":
+            img = img.convert("RGB")
             buf = io.BytesIO()
-            image.save(buf, "JPEG", quality=70, optimize=True)
+            img.save(buf, "JPEG", quality=70, optimize=True)
             image_bytes = buf.getvalue()
             mime_type = "image/jpeg"
 
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-    logger.info("Sending page image to Gemini (%d bytes, %s)", len(image_bytes), mime_type)
+    config      = types.GenerateContentConfig(temperature=0.1)
 
-    config = types.GenerateContentConfig(temperature=0.1)
-
-    # Fastest models first — lite models respond in ~2-4s vs ~5-8s for full
-    model_chain = [
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.5-flash",
-    ]
+    model_chain = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
     last_error: Exception | None = None
 
     for model_name in model_chain:
         for attempt in range(retries):
             try:
-                response = _client.models.generate_content(
+                response = _gemini_client.models.generate_content(
                     model=model_name,
                     contents=[image_part, ANALYSIS_PROMPT],
                     config=config,
@@ -157,44 +261,39 @@ def analyze_page(image_path: str, retries: int = 2) -> dict:
                 if json_match:
                     raw_text = json_match.group(0)
 
-                data = json.loads(raw_text)
+                data   = json.loads(raw_text)
                 result = _validate_and_normalise(data, image_path)
-                logger.info("Analysis succeeded with model %s (attempt %d)", model_name, attempt + 1)
+                logger.info("Gemini fallback succeeded with %s (attempt %d)", model_name, attempt + 1)
                 return result
 
             except json.JSONDecodeError as exc:
                 last_error = exc
-                logger.warning("Non-JSON from %s attempt %d: %s", model_name, attempt + 1, exc)
                 if attempt < retries - 1:
                     time.sleep(0.5)
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
-                is_quota = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
-                logger.error("Error from %s attempt %d: %s", model_name, attempt + 1, exc)
+                is_quota = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+                logger.error("Gemini %s attempt %d: %s", model_name, attempt + 1, exc)
                 if is_quota:
                     break
                 if attempt < retries - 1:
                     time.sleep(0.5)
 
-    err_msg = f"All Gemini models exhausted. Last error: {last_error}"
-    logger.error(err_msg)
-    raise RuntimeError(err_msg)
+    raise RuntimeError(f"All Gemini models exhausted. Last error: {last_error}")
 
+
+# ── Shared helpers ───────────────────────────────────────────────────────────
 
 def _resolve_section(raw: str) -> str:
-    """Map any section string Gemini might return to a canonical valid section."""
     if raw in VALID_SECTIONS:
         return raw
-    normalised = raw.strip().lower()
-    return SECTION_ALIASES.get(normalised, "Sport")  # default to Sport if truly unrecognised
+    return SECTION_ALIASES.get(raw.strip().lower(), "Sport")
 
 
 def _validate_and_normalise(data: dict, image_path: str) -> dict:
-    """Ensure all required fields are present and of the correct type."""
     page_number_raw = data.get("page_number", 0)
-
-    if page_number_raw == "unknown" or page_number_raw is None:
+    if page_number_raw in ("unknown", None):
         page_number = 0
     else:
         try:
@@ -202,13 +301,11 @@ def _validate_and_normalise(data: dict, image_path: str) -> dict:
         except (TypeError, ValueError):
             page_number = 0
 
-    section = _resolve_section(str(data.get("section", "")))
-
-    tags = data.get("tags", [])
+    section  = _resolve_section(str(data.get("section", "")))
+    tags     = data.get("tags", [])
     if not isinstance(tags, list):
         tags = []
-    tags = [str(t) for t in tags[:5]]
-
+    tags     = [str(t) for t in tags[:5]]
     headline = str(data.get("headline", ""))
 
     return {
@@ -216,14 +313,4 @@ def _validate_and_normalise(data: dict, image_path: str) -> dict:
         "section": section,
         "tags": tags,
         "headline": headline,
-    }
-
-
-def _fallback_metadata(image_path: str) -> dict:
-    """Return safe fallback metadata when Gemini analysis fails."""
-    return {
-        "page_number": 0,
-        "section": "Sport",
-        "tags": [],
-        "headline": "",
     }
