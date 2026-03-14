@@ -11,9 +11,8 @@
 }
 
 .agent-body {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 1.5rem;
+  display: flex;
+  justify-content: center;
   flex: 1;
   min-height: 0;
   margin-top: 1rem;
@@ -21,6 +20,8 @@
 
 /* Chat Container */
 .agent-chat-container {
+  width: 100%;
+  max-width: 900px;
   background: rgba(255, 255, 255, 0.6);
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
@@ -372,95 +373,11 @@
 
 /* Status Panel */
 .agent-status-panel {
-  background: var(--bg-card);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  padding: 1.5rem;
-  box-shadow: var(--shadow);
-  height: fit-content;
-  position: sticky;
-  top: 2rem;
-}
-
-.agent-status-title {
-  font-family: 'Outfit', sans-serif;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 1.25rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.agent-status-title::before {
-  content: '';
-  display: block;
-  width: 8px;
-  height: 8px;
-  background: #22c55e;
-  border-radius: 50%;
-  box-shadow: 0 0 8px #22c55e;
-}
-
-.agent-status-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border-light);
-  margin-bottom: 1rem;
-}
-
-.agent-status-item:last-of-type {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
-}
-
-.status-label {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-}
-
-.status-value {
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.status-list {
-  margin: 0;
-  padding-left: 1.25rem;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.status-list li {
-  margin: 0.25rem 0;
-  position: relative;
-}
-
-.status-list li::marker {
-  color: var(--accent);
+  display: none;
 }
 
 /* Responsive */
 @media (max-width: 1024px) {
-  .agent-body {
-    grid-template-columns: 1fr;
-  }
-
-  .agent-status-panel {
-    display: none; /* Hide status panel on smaller screens to focus on chat */
-  }
-
   .message-wrapper {
     max-width: 95%;
   }

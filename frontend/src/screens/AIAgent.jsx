@@ -7,14 +7,6 @@ function getTodayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-const SUGGESTED_QUESTIONS = [
-  'What was our best performing section this week?',
-  'Should we extend today\'s deadline based on current uploads?',
-  'Which designer is most productive this month?',
-  'What content performs best with subscribers?',
-  'What should we prioritize for tomorrow\'s edition?',
-  'Any issues with today\'s uploads I should know about?',
-];
 
 // --- Icons ---
 const SendIcon = () => (
@@ -111,9 +103,6 @@ export default function AIAgent() {
     }
   }, [todayStr]);
 
-  const handleSuggestedQuestion = (question) => {
-    handleSendMessage(question);
-  };
 
   return (
     <div className="ai-agent-page">
@@ -163,24 +152,6 @@ export default function AIAgent() {
               </div>
             ))}
 
-            {/* Empty State / Suggested Questions */}
-            {messages.length === 1 && !loading && (
-              <div className="suggested-container">
-                <p className="suggested-label">Suggestions</p>
-                <div className="suggested-grid">
-                  {SUGGESTED_QUESTIONS.map((q, idx) => (
-                    <button
-                      key={idx}
-                      className="suggested-btn"
-                      onClick={() => handleSuggestedQuestion(q)}
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {loading && (
               <div className="message-wrapper message-wrapper--bot">
                 <div className="message-avatar bot-avatar">
@@ -228,33 +199,6 @@ export default function AIAgent() {
               </button>
             </div>
             <p className="input-hint">AI can make mistakes. Consider verifying important information.</p>
-          </div>
-        </div>
-
-        {/* Agent Status Panel */}
-        <div className="agent-status-panel">
-          <h3 className="agent-status-title">Agent Status</h3>
-          <div className="agent-status-item">
-            <span className="status-label">Model</span>
-            <span className="status-value">GLM-4.5 Air (OpenRouter)</span>
-          </div>
-          <div className="agent-status-item">
-            <span className="status-label">Data Sources</span>
-            <span className="status-value">Pages, Editions, Subscribers, Analytics</span>
-          </div>
-          <div className="agent-status-item">
-            <span className="status-label">Training Data</span>
-            <span className="status-value">Last 90 days of operations</span>
-          </div>
-          <div className="agent-status-item">
-            <span className="status-label">Capabilities</span>
-            <ul className="status-list">
-              <li>Data analysis & insights</li>
-              <li>Performance recommendations</li>
-              <li>Timeline optimization</li>
-              <li>Trend forecasting</li>
-              <li>Team analytics</li>
-            </ul>
           </div>
         </div>
       </div>
