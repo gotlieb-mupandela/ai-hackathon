@@ -8,12 +8,25 @@ A complete step-by-step guide to get the NewEra Editorial Automation System up a
 
 Before you start, ensure you have:
 
-- **Python 3.9+** — [Download](https://www.python.org/downloads/)
-- **Node.js 18+** — [Download](https://nodejs.org/)
+- **Python 3.9+**
+  - **macOS:** `brew install python@3.11` (or use [Python.org](https://www.python.org/downloads/))
+  - **Windows:** [Download from Python.org](https://www.python.org/downloads/) (ensure "Add Python to PATH" is checked)
+  - **Linux:** `sudo apt install python3.11`
+
+- **Node.js 18+**
+  - **macOS:** `brew install node`
+  - **Windows/Linux:** [Download from nodejs.org](https://nodejs.org/)
+
 - **Poppler** (for PDF processing)
-  - **Windows:** Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases) and add `bin/` to your PATH
   - **macOS:** `brew install poppler`
+  - **Windows:** Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases) and add `bin/` to your PATH
   - **Linux:** `sudo apt install poppler-utils`
+
+- **Git** (for cloning the repo)
+  - **macOS:** `brew install git` or [Download](https://git-scm.com/)
+  - **Windows:** [Download from git-scm.com](https://git-scm.com/)
+  - **Linux:** `sudo apt install git`
+
 - **Google Gemini API key** — Get free at [https://aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 - **Supabase account** — Create free project at [https://supabase.com](https://supabase.com)
 
@@ -97,6 +110,146 @@ cd ai-hackathon/newera-system
    - Password: `123456`
 
 3. You'll now have **admin access** to the entire system.
+
+---
+
+## 🍎 macOS-Specific Setup Tips
+
+### Installing Dependencies with Homebrew
+
+If you don't have Homebrew, install it first:
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Then install all dependencies:
+```bash
+# Python
+brew install python@3.11
+
+# Node.js
+brew install node
+
+# Poppler (required for PDF processing)
+brew install poppler
+
+# Git (if needed)
+brew install git
+```
+
+### Verify Installations
+
+After installing, verify everything works:
+```bash
+python3 --version        # Should be 3.9+
+node --version          # Should be 18+
+npm --version           # Should come with Node
+which pdftoimage        # Should show /usr/local/bin/pdftoimage or similar
+```
+
+### Running on macOS
+
+When you `cd newera-system`, make sure you're using **Python 3.11** specifically (not the system Python):
+
+```bash
+# Use python3 explicitly
+cd backend
+python3 -m pip install -r requirements.txt
+python3 -m uvicorn main:app --reload --port 8000
+```
+
+Or add an alias to your `~/.zshrc` or `~/.bash_profile`:
+```bash
+alias python3.11="/usr/local/bin/python3.11"
+```
+
+Then restart your terminal and use:
+```bash
+python3.11 -m pip install -r requirements.txt
+```
+
+### Common macOS Issues
+
+**"Command not found: pdftoimage"**
+- Poppler wasn't installed correctly. Run: `brew install poppler`
+- If still not found, try: `brew reinstall poppler`
+
+**"ModuleNotFoundError: No module named 'pdf2image'"**
+- Make sure you used `python3 -m pip` not just `pip`
+- Verify: `python3 -c "import pdf2image"` (should not error)
+
+**Port 8000 or 3000 already in use**
+- Change port in the command: `uvicorn main:app --reload --port 8001`
+- Or find and kill the process: `lsof -i :8000` then `kill -9 <PID>`
+
+---
+
+## 🪟 Windows-Specific Setup Tips
+
+### Installing Dependencies
+
+1. **Python:** Download from [python.org](https://www.python.org/downloads/) and run installer
+   - ✅ **Important:** Check "Add Python to PATH" during installation
+   - Restart Command Prompt after installation
+
+2. **Node.js:** Download from [nodejs.org](https://nodejs.org/) and run installer
+
+3. **Poppler:** 
+   - Download from [poppler-windows releases](https://github.com/oschwartz10612/poppler-windows/releases)
+   - Extract to `C:\poppler` (or your preferred location)
+   - Add `C:\poppler\Library\bin` to your **PATH**:
+     - Search for "Environment Variables" in Start Menu
+     - Click "Edit the system environment variables"
+     - Click "Environment Variables..." button
+     - Under "User variables", click "New"
+     - Variable name: `PATH`
+     - Variable value: `C:\poppler\Library\bin`
+     - Click OK and restart PowerShell/Command Prompt
+
+### Verify Installations
+
+Open **Command Prompt** or **PowerShell** and run:
+```bash
+python --version         # Should be 3.9+
+node --version          # Should be 18+
+npm --version           # Should come with Node
+where pdftoimage        # Should show C:\poppler\Library\bin\pdftoimage.exe
+```
+
+### Running on Windows
+
+```bash
+cd newera-system/backend
+python -m pip install -r requirements.txt
+python -m uvicorn main:app --reload --port 8000
+```
+
+In another terminal:
+```bash
+cd newera-system/frontend
+npm install --legacy-peer-deps
+npm start
+```
+
+### Common Windows Issues
+
+**"python command not found"**
+- Python wasn't added to PATH. Reinstall Python and check "Add Python to PATH"
+- Or use `python3` or `py` instead
+
+**"pdftoimage not found"**
+- Poppler `bin` folder isn't in PATH. Verify in "Environment Variables"
+- Restart PowerShell/Command Prompt after adding to PATH
+
+**"npm ERR! code ERESOLVE"**
+- Use `npm install --legacy-peer-deps` (as specified in instructions)
+
+**"Port 8000 or 3000 already in use"**
+- Find and kill the process:
+  ```bash
+  netstat -ano | findstr :8000
+  taskkill /PID <PID> /F
+  ```
 
 ---
 
