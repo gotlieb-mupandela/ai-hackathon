@@ -77,6 +77,42 @@ function extractPageNumberFromFilename(filename) {
   return null;
 }
 
+/**
+ * Extract section name from filename if it contains a known section keyword.
+ * E.g. NE_20260302_Business.pdf → "Business", NE_20260302_Sport.pdf → "Sport"
+ */
+const KNOWN_SECTIONS_MAP = {
+  sport:     'Sport',
+  business:  'Business',
+  news:      'News',
+  vibez:     'Vibez!',
+  agritoday: 'AgriToday',
+  solzi:     'Solzi',
+};
+
+function extractSectionFromFilename(filename) {
+  if (!filename) return null;
+  const name = filename.replace(/\.pdf$/i, '').toLowerCase().trim();
+  for (const [keyword, section] of Object.entries(KNOWN_SECTIONS_MAP)) {
+    if (name.includes(keyword)) return section;
+  }
+  return null;
+}
+
+/** Process an array in batches of `size` with `delayMs` between batches. */
+async function processBatches(items, batchSize, delayMs, processFn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.allSettled(batch.map(processFn));
+    results.push(...batchResults);
+    if (i + batchSize < items.length && delayMs > 0) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  return results;
+}
+
 function getTodayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -235,19 +271,46 @@ export default function Pipeline() {
       addLog(`Full newspaper merged: ${validBlobs.length} pages in order`);
       updateStep(1, 'done', Date.now() - start);
 
-      // ── Step 2: AI Analyze ALL Pages simultaneously ─────────────────
+      // ── Step 2: Classify pages — filename first, then AI in batches ──
       start = Date.now();
       updateStep(2, 'running');
-      addLog(`Sending all ${sortedPages.length} pages to AI vision simultaneously...`);
-      addLog('AI will read the section keyword at the top of each page (News, Sport, Business, Vibez!, AgriToday, Solzi)');
 
-      const analysisResults = await Promise.allSettled(
-        sortedPages.map(async (page, idx) => {
+      const analyzedPages = [];
+      const needsAI = [];    // indices that need AI vision
+
+      // Pass 1: check filenames for known section keywords
+      sortedPages.forEach((page, idx) => {
+        const filenameSection = extractSectionFromFilename(page.filename);
+        const pageNum = extractPageNumberFromFilename(page.filename) ?? page.page_number;
+        if (filenameSection) {
+          addLog(`  p${pageNum ?? '?'} [${filenameSection}] — ${page.filename} (from filename)`);
+          analyzedPages[idx] = { ...page, page_number: pageNum, section: filenameSection, headline: '' };
+          updatePage(page.id, { page_number: pageNum, section: filenameSection, status: 'analysed' }).catch(() => {});
+        } else {
+          analyzedPages[idx] = null;
+          needsAI.push(idx);
+        }
+      });
+
+      const skippedCount = sortedPages.length - needsAI.length;
+      if (skippedCount > 0) {
+        addLog(`${skippedCount} page(s) classified by filename — skipping AI for those.`);
+      }
+
+      // Pass 2: send remaining pages to AI vision in batches of 5
+      if (needsAI.length > 0) {
+        addLog(`Sending ${needsAI.length} pages to AI vision (batches of 5)...`);
+        addLog('AI reads the section keyword at the top of each page (News, Sport, Business, Vibez!, AgriToday, Solzi)');
+
+        const BATCH_SIZE = 5;
+        const BATCH_DELAY = 2000;
+
+        const aiResults = await processBatches(needsAI, BATCH_SIZE, BATCH_DELAY, async (idx) => {
+          const page = sortedPages[idx];
           const blob = pdfBlobs[idx];
           if (!blob) throw new Error('PDF not downloaded');
           const file = new File([blob], page.filename, { type: 'application/pdf' });
           const analysis = await analyzePage(file);
-          // Also update stored page_number if we didn't have one
           const pageNum = extractPageNumberFromFilename(page.filename) ?? analysis.page_number;
           await updatePage(page.id, {
             page_number: pageNum,
@@ -256,29 +319,62 @@ export default function Pipeline() {
             tags: analysis.tags,
             status: 'analysed',
           });
-          return { page, analysis, pageNum };
-        })
-      );
+          return { idx, page, analysis, pageNum };
+        });
 
-      let analysisSuccess = 0;
-      let analysisFailed = 0;
-      const analyzedPages = [];
+        // Collect results and retry failures once
+        const retryIndices = [];
+        aiResults.forEach((r, i) => {
+          const idx = needsAI[i];
+          if (r.status === 'fulfilled') {
+            const { page, analysis, pageNum } = r.value;
+            analyzedPages[idx] = { ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline };
+            addLog(`  p${pageNum ?? '?'} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename}`);
+          } else {
+            retryIndices.push(idx);
+          }
+        });
 
-      analysisResults.forEach((r, idx) => {
-        if (r.status === 'fulfilled') {
-          const { page, analysis, pageNum } = r.value;
-          analyzedPages.push({ ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline });
-          addLog(`  p${pageNum} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename}`);
-          analysisSuccess++;
-        } else {
-          addLog(`  [ERROR] ${sortedPages[idx].filename}: ${r.reason?.message || 'Unknown'}`);
-          // Fall back to 'News' section if AI failed
-          analyzedPages.push({ ...sortedPages[idx], section: sortedPages[idx].section || 'News' });
-          analysisFailed++;
+        // Retry failed pages one more time (one at a time to be gentle on the API)
+        if (retryIndices.length > 0) {
+          addLog(`Retrying ${retryIndices.length} failed page(s)...`);
+          const retryResults = await processBatches(retryIndices, 2, 3000, async (idx) => {
+            const page = sortedPages[idx];
+            const blob = pdfBlobs[idx];
+            if (!blob) throw new Error('PDF not downloaded');
+            const file = new File([blob], page.filename, { type: 'application/pdf' });
+            const analysis = await analyzePage(file);
+            const pageNum = extractPageNumberFromFilename(page.filename) ?? analysis.page_number;
+            await updatePage(page.id, {
+              page_number: pageNum,
+              section: analysis.section,
+              headline: analysis.headline,
+              tags: analysis.tags,
+              status: 'analysed',
+            });
+            return { idx, page, analysis, pageNum };
+          });
+
+          retryResults.forEach((r, i) => {
+            const idx = retryIndices[i];
+            if (r.status === 'fulfilled') {
+              const { page, analysis, pageNum } = r.value;
+              analyzedPages[idx] = { ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline };
+              addLog(`  p${pageNum ?? '?'} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename} (retry OK)`);
+            } else {
+              addLog(`  [ERROR] ${sortedPages[idx].filename}: ${r.reason?.message || 'Unknown'} — defaulting to News`);
+              analyzedPages[idx] = { ...sortedPages[idx], section: sortedPages[idx].section || 'News' };
+            }
+          });
         }
+      }
+
+      // Fill any remaining nulls (shouldn't happen, but safety net)
+      analyzedPages.forEach((p, idx) => {
+        if (!p) analyzedPages[idx] = { ...sortedPages[idx], section: 'News' };
       });
 
-      addLog(`AI analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
+      addLog(`Analysis complete: ${sortedPages.length} pages classified (${skippedCount} by filename, ${needsAI.length} by AI)`);
       updateStep(2, 'done', Date.now() - start);
 
       // ── Step 3: Split by Section ────────────────────────────────────
