@@ -1,57 +1,44 @@
 /**
- * Supabase client for Auth and app data.
- * Reads config at runtime so `public/config.js` works even if it loads after
- * the bundle is built or the dev server hot-reloads.
+ * Supabase singleton client.
+ *
+ * The window-level check at the TOP of this module ensures only ONE
+ * GoTrueClient is ever created, even when Webpack HMR re-executes the
+ * module (React Fast Refresh). Storing on `window` survives hot reloads;
+ * a normal module variable would reset to null on every HMR cycle.
  */
 import { createClient } from '@supabase/supabase-js';
 
-// Use window-level key so the singleton survives hot-module reloads in dev
-const SINGLETON_KEY = '__newera_supabase_client__';
-let warnedMissingConfig = false;
+const SUPABASE_URL     = process.env.REACT_APP_SUPABASE_URL      || '';
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || '';
 
-function readSupabaseConfig() {
-  const runtimeUrl =
-    typeof window !== 'undefined' ? window.__SUPABASE_URL__ || '' : '';
-  const runtimeAnonKey =
-    typeof window !== 'undefined' ? window.__SUPABASE_ANON_KEY__ || '' : '';
+const SINGLETON_KEY = '__newera_supabase__';
 
-  return {
-    supabaseUrl: process.env.REACT_APP_SUPABASE_URL || runtimeUrl || '',
-    supabaseAnonKey:
-      process.env.REACT_APP_SUPABASE_ANON_KEY || runtimeAnonKey || '',
-  };
-}
-
-export function getSupabaseClient() {
-  if (typeof window !== 'undefined' && window[SINGLETON_KEY]) {
-    return window[SINGLETON_KEY];
-  }
-
-  const { supabaseUrl, supabaseAnonKey } = readSupabaseConfig();
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    if (!warnedMissingConfig) {
-      warnedMissingConfig = true;
-      console.warn(
-        'Supabase URL or anon key missing. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY in .env or public/config.js.'
-      );
-    }
+function _build() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.warn(
+      '[supabase] Missing REACT_APP_SUPABASE_URL or REACT_APP_SUPABASE_ANON_KEY'
+    );
     return null;
   }
-
-  const client = createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
+      persistSession:    true,
+      autoRefreshToken:  true,
       detectSessionInUrl: true,
     },
   });
-
-  if (typeof window !== 'undefined') {
-    window[SINGLETON_KEY] = client;
-  }
-
-  return client;
 }
 
-export const supabase = getSupabaseClient();
+// Guard: create only once per browser context, never during HMR re-runs
+if (typeof window !== 'undefined' && !window[SINGLETON_KEY]) {
+  window[SINGLETON_KEY] = _build();
+}
+
+/** The single shared Supabase client. Import this directly. */
+export const supabase =
+  typeof window !== 'undefined' ? window[SINGLETON_KEY] : _build();
+
+/** Backwards-compat helper used by older code paths. */
+export function getSupabaseClient() {
+  return supabase;
+}
