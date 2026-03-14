@@ -22,9 +22,15 @@ function _build() {
   }
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-      persistSession:    true,
-      autoRefreshToken:  true,
-      detectSessionInUrl: true,
+      persistSession:      true,
+      autoRefreshToken:    true,
+      detectSessionInUrl:  true,
+      // Use a fast in-memory lock in development to avoid the 5-second
+      // "orphaned lock" warning caused by rapid HMR reloads.
+      // Production still uses the default navigator.locks for safety.
+      ...(process.env.NODE_ENV === 'development' && {
+        lock: async (_name, _timeout, fn) => fn(),
+      }),
     },
   });
 }
