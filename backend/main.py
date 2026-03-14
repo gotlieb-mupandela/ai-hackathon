@@ -295,30 +295,24 @@ class AgentQuery(BaseModel):
 @app.post("/agent/query")
 async def agent_query(body: AgentQuery):
     """
-    Query the AI Agent with data-driven insights.
-    Runs fully offline using Ollama (llama3) — no internet or API key needed.
+    Query the AI Agent. Uses Ollama (llama3) when available, falls back to Gemini.
     """
     try:
-        import ollama
-
         supabase = _create_supabase_client(
             os.getenv("SUPABASE_URL", ""),
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         )
 
         # Fetch live company data for context
-        pages_data = supabase.from_('pages').select('*').eq('edition_date', body.date).execute()
-        editions_data = supabase.from_('editions').select('*').eq('date', body.date).execute()
+        pages_data    = supabase.table('pages').select('*').eq('edition_date', body.date).execute()
+        editions_data = supabase.table('editions').select('*').eq('date', body.date).execute()
 
         pages_count = len(pages_data.data) if pages_data.data else 0
-        sections: dict[str, int] = {}
+        sections: dict = {}
         if pages_data.data:
             for page in pages_data.data:
                 sec = page.get('section', 'Unknown')
                 sections[sec] = sections.get(sec, 0) + 1
-
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
-        ollama_host  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
         system_prompt = (
             f"You are an AI Agent trained on NewEra's editorial operations data.\n"
@@ -328,38 +322,61 @@ async def agent_query(body: AgentQuery):
             "- Page upload data (filenames, sections, status)\n"
             "- Edition information (deadline, expected pages, status)\n"
             "- Designer performance (upload counts)\n"
-            "- Subscriber and subscription data\n"
-            "- Historical patterns from the past 90 days\n\n"
+            "- Subscriber and subscription data\n\n"
             "Your role:\n"
             "1. Analyse patterns in editorial operations\n"
             "2. Provide data-driven recommendations\n"
             "3. Answer questions about performance, trends, and optimisation\n"
             "4. Help the admin team run operations more efficiently\n\n"
-            "Keep responses concise, actionable, and data-focused.\n"
-            "Always explain your reasoning."
+            "Keep responses concise, actionable, and data-focused."
         )
 
-        client = ollama.Client(host=ollama_host)
-        response = client.chat(
-            model=ollama_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": body.query},
-            ],
-            options={"temperature": 0.7},
-        )
+        answer_text = ""
+        model_used   = ""
 
-        answer_text = response.message.content.strip()
-        logger.info("Agent query (Ollama/%s): %s", ollama_model, body.query[:100])
+        # ── Try Ollama first (offline) ─────────────────────────────────
+        ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
+        ollama_host  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        try:
+            import ollama as _ollama
+            client = _ollama.Client(host=ollama_host)
+            resp = client.chat(
+                model=ollama_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": body.query},
+                ],
+                options={"temperature": 0.7},
+            )
+            answer_text = resp.message.content.strip()
+            model_used  = f"llama3 (offline)"
+            logger.info("Agent query handled by Ollama/%s", ollama_model)
+
+        except Exception as ollama_exc:
+            logger.warning("Ollama unavailable (%s) — falling back to Gemini", ollama_exc)
+
+            # ── Fall back to Gemini ────────────────────────────────────
+            from google import genai as _genai
+            gemini_client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+            resp = gemini_client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[f"System context:\n{system_prompt}\n\nUser query: {body.query}"],
+                config=_genai.types.GenerateContentConfig(temperature=0.7),
+            )
+            answer_text = (resp.text or "").strip()
+            model_used  = "gemini-2.0-flash (cloud)"
+            logger.info("Agent query handled by Gemini fallback")
+
+        logger.info("Agent query: %s", body.query[:100])
 
         return {
             "answer": answer_text,
-            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections (offline · {ollama_model})",
+            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections ({model_used})",
             "data": {
                 "pages_uploaded": pages_count,
                 "sections": sections,
                 "query_date": body.date,
-                "model": ollama_model,
+                "model": model_used,
             },
         }
 
@@ -367,17 +384,7 @@ async def agent_query(body: AgentQuery):
         raise
     except Exception as exc:
         logger.exception("Agent query failed: %s", exc)
-        err = str(exc)
-        # Give a clear message if Ollama isn't running
-        if "connection" in err.lower() or "refused" in err.lower() or "connect" in err.lower():
-            raise HTTPException(
-                status_code=503,
-                detail="Ollama is not running. Start it with: ollama serve"
-            )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Agent analysis failed: {err}"
-        )
+        raise HTTPException(status_code=500, detail=f"Agent analysis failed: {str(exc)}")
 
 
 class ConfirmEmailBody(BaseModel):

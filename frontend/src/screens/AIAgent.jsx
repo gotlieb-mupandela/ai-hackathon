@@ -12,14 +12,14 @@ function getTodayStr() {
 }
 
 const SUGGESTED_QUESTIONS = [
-  '📊 What was our best performing section this week?',
-  '⏰ Should we extend today\'s deadline based on current uploads?',
-  '👥 Which designer is most productive this month?',
-  '📈 What content performs best with subscribers?',
-  '🎯 What should we prioritize for tomorrow\'s edition?',
-  '💡 Any issues with today\'s uploads I should know about?',
-  '🔄 What improvements would boost our circulation?',
-  '📱 What\'s the best time to publish for maximum engagement?',
+  'What was our best performing section this week?',
+  'Should we extend today\'s deadline based on current uploads?',
+  'Which designer is most productive this month?',
+  'What content performs best with subscribers?',
+  'What should we prioritize for tomorrow\'s edition?',
+  'Any issues with today\'s uploads I should know about?',
+  'What improvements would boost our circulation?',
+  'What\'s the best time to publish for maximum engagement?',
 ];
 
 export default function AIAgent() {
@@ -27,7 +27,7 @@ export default function AIAgent() {
     {
       id: 1,
       type: 'bot',
-      text: 'Hey there! 👋 I\'m your AI Agent, trained on NewEra\'s company data. I can help you make informed decisions about your editorial operations. Ask me anything about your content, team performance, subscriber data, or upload patterns!',
+      text: 'I\'m your AI Agent, trained on NewEra\'s company data. I can help you make informed decisions about your editorial operations. Ask me anything about your content, team performance, subscriber data, or upload patterns.',
       timestamp: new Date(),
     },
   ]);
@@ -104,7 +104,7 @@ export default function AIAgent() {
             {messages.map((msg) => (
               <div key={msg.id} className={`message message--${msg.type}`}>
                 <div className="message-avatar">
-                  {msg.type === 'bot' ? '🤖' : '👤'}
+                  {msg.type === 'bot' ? 'AI' : 'You'}
                 </div>
                 <div className="message-content">
                   <p className="message-text">{msg.text}</p>
@@ -127,7 +127,7 @@ export default function AIAgent() {
             ))}
             {loading && (
               <div className="message message--bot message--loading">
-                <div className="message-avatar">🤖</div>
+                <div className="message-avatar">AI</div>
                 <div className="message-content">
                   <div className="typing-indicator">
                     <span></span>
@@ -164,7 +164,7 @@ export default function AIAgent() {
             <div className="agent-input-wrap">
               <textarea
                 className="agent-input"
-                placeholder="Ask me about your content, team, subscribers, performance... I'm trained on your data! 💡"
+                placeholder="Ask me about your content, team, subscribers, performance... I'm trained on your data."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -181,10 +181,10 @@ export default function AIAgent() {
                 onClick={() => handleSendMessage(input)}
                 disabled={loading || !input.trim()}
               >
-                {loading ? '⏳ Thinking...' : '📤 Send'}
+                {loading ? 'Thinking...' : 'Send'}
               </button>
             </div>
-            <p className="input-hint">Tip: Ask specific questions for better insights. (Shift+Enter for newline)</p>
+            <p className="input-hint">Ask specific questions for better insights. (Shift+Enter for newline)</p>
           </div>
         </div>
 
@@ -193,7 +193,7 @@ export default function AIAgent() {
           <h3 className="agent-status-title">Agent Status</h3>
           <div className="agent-status-item">
             <span className="status-label">Model</span>
-            <span className="status-value">Claude 3.5 Sonnet</span>
+            <span className="status-value">Llama 3 (Offline)</span>
           </div>
           <div className="agent-status-item">
             <span className="status-label">Data Sources</span>
@@ -206,11 +206,11 @@ export default function AIAgent() {
           <div className="agent-status-item">
             <span className="status-label">Capabilities</span>
             <ul className="status-list">
-              <li>📊 Data analysis & insights</li>
-              <li>🎯 Performance recommendations</li>
-              <li>⏰ Timeline optimization</li>
-              <li>📈 Trend forecasting</li>
-              <li>👥 Team analytics</li>
+              <li>Data analysis & insights</li>
+              <li>Performance recommendations</li>
+              <li>Timeline optimization</li>
+              <li>Trend forecasting</li>
+              <li>Team analytics</li>
             </ul>
           </div>
         </div>
