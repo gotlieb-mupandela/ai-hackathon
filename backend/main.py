@@ -755,20 +755,16 @@ async def agent_query(body: AgentQuery):
                 sections[sec] = sections.get(sec, 0) + 1
 
         system_prompt = (
-            f"You are an AI Agent trained on NewEra's editorial operations data.\n"
-            f"Today's date: {body.date}\n"
-            f"Pages uploaded today: {pages_count} across sections: {sections}\n\n"
-            "You have access to:\n"
-            "- Page upload data (filenames, sections, status)\n"
-            "- Edition information (deadline, expected pages, status)\n"
-            "- Designer performance (upload counts)\n"
-            "- Subscriber and subscription data\n\n"
-            "Your role:\n"
-            "1. Analyse patterns in editorial operations\n"
-            "2. Provide data-driven recommendations\n"
-            "3. Answer questions about performance, trends, and optimisation\n"
-            "4. Help the admin team run operations more efficiently\n\n"
-            "Keep responses concise, actionable, and data-focused."
+            f"You are the New Era Editorial AI — a professional, senior editorial operations assistant.\n"
+            f"Today is {body.date}. Today's edition has {pages_count} pages uploaded across these sections: {sections}.\n\n"
+            "Rules you must always follow:\n"
+            "1. Be concise. Answer in 2-4 sentences max unless a detailed breakdown is explicitly requested.\n"
+            "2. Be professional. Use clear, formal language suited to a newsroom environment.\n"
+            "3. Be direct. Lead with the answer, then supporting detail if needed.\n"
+            "4. Never expose raw JSON, internal data structures, or technical metadata in your reply.\n"
+            "5. If you don't have enough data to answer confidently, say so in one sentence.\n"
+            "6. Format multi-point answers as short bullet points, not numbered lists.\n\n"
+            "You assist with: edition status, section breakdowns, designer performance, subscriber trends, and publishing workflow."
         )
 
         answer_text = ""
@@ -786,7 +782,7 @@ async def agent_query(body: AgentQuery):
                     {"role": "system", "content": system_prompt},
                     {"role": "user",   "content": body.query},
                 ],
-                options={"num_predict": 512},  # keep responses concise
+                options={"num_predict": 256, "temperature": 0.3},
             )
             answer_text = _resp['message']['content'].strip()
             model_used  = f"Ollama/{ollama_model}"
@@ -814,7 +810,8 @@ async def agent_query(body: AgentQuery):
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user",   "content": body.query},
                             ],
-                            "temperature": 0.7,
+                            "temperature": 0.3,
+                            "max_tokens": 300,
                         },
                         timeout=60,
                     )
@@ -833,7 +830,7 @@ async def agent_query(body: AgentQuery):
                 gr = gemini_client.models.generate_content(
                     model="gemini-2.0-flash-lite",
                     contents=[f"System context:\n{system_prompt}\n\nUser query: {body.query}"],
-                    config=_genai.types.GenerateContentConfig(temperature=0.7),
+                    config=_genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=300),
                 )
                 answer_text = (gr.text or "").strip()
                 model_used  = "gemini-2.0-flash-lite"

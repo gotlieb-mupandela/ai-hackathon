@@ -121,19 +121,6 @@ export default function AIAgent() {
                 <div className={`message-bubble message-bubble--${msg.type}`}>
                   <p className="message-text">{msg.text}</p>
                   
-                  {msg.reasoning && (
-                    <details className="message-reasoning">
-                      <summary>View agent reasoning</summary>
-                      <p>{msg.reasoning}</p>
-                    </details>
-                  )}
-                  
-                  {msg.data && (
-                    <div className="message-data">
-                      <pre>{JSON.stringify(msg.data, null, 2)}</pre>
-                    </div>
-                  )}
-                  
                   <span className="message-time">
                     {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
