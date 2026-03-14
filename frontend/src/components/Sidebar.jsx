@@ -136,7 +136,6 @@ function ManagementGroup() {
 }
 
 const DESIGNER_NAV_ITEMS = [
-  { path: '/designer-dashboard', label: 'Dashboard',    icon: <DashIcon /> },
   { path: '/upload',             label: 'My Uploads',   icon: <UploadIcon /> },
   { path: '/viewer',             label: 'ePaper Viewer',icon: <ViewerIcon /> },
   { path: '/archive',            label: 'Archive',      icon: <ArchiveIcon /> },

@@ -9,7 +9,6 @@ import Pipeline from './screens/Pipeline';
 import EPaperViewer from './screens/EPaperViewer';
 import Archive from './screens/Archive';
 import Dashboard from './screens/Dashboard';
-import DesignerDashboard from './screens/DesignerDashboard';
 import Designers from './screens/Designers';
 import Subscriptions from './screens/Subscriptions';
 import Sections from './screens/Sections';
@@ -93,7 +92,6 @@ function PrivateLayout() {
                 <Route path="/agent" element={<AIAgent />} />
               </>
             )}
-            <Route path="/designer-dashboard" element={<DesignerDashboard />} />
             <Route path="/upload" element={<Upload />} />
             <Route path="/pipeline" element={isAdmin ? <Pipeline /> : <Navigate to="/upload" replace />} />
             <Route path="/viewer" element={<EPaperViewer />} />
