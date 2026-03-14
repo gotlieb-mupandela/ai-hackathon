@@ -106,11 +106,6 @@ export default function AIAgent() {
 
   return (
     <div className="ai-agent-page">
-      <div className="page-header">
-        <h1 className="page-title">AI Agent</h1>
-        <p className="page-subtitle">Autonomous agent trained on NewEra data. Ask questions, get data-driven insights.</p>
-      </div>
-
       <div className="agent-body">
         {/* Chat Area */}
         <div className="agent-chat-container">

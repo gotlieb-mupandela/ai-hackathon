@@ -1,10 +1,10 @@
 /* AI Agent Screen Styles */
 
 .ai-agent-page {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
-  height: 100vh;
+  padding: 0;
+  max-width: 100%;
+  margin: 0;
+  height: calc(100vh - 60px); /* Adjust for navbar height */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -15,19 +15,17 @@
   justify-content: center;
   flex: 1;
   min-height: 0;
-  margin-top: 1rem;
+  margin-top: 0;
 }
 
 /* Chat Container */
 .agent-chat-container {
   width: 100%;
-  max-width: 1000px;
-  background: rgba(255, 255, 255, 0.6);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  max-width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -42,7 +40,7 @@
   flex-direction: column;
   gap: 1.5rem;
   scroll-behavior: smooth;
-  max-width: 800px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
 }
@@ -279,7 +277,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  max-width: 800px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
 }
