@@ -41,16 +41,10 @@ function buildEditionCards(editions) {
     const paths = edition.storage_paths || edition.outputs;
     if (!paths) continue;
 
-    // Always use the full_paper as the cover thumbnail for every card
-    const fullPaperUrl = paths.full_paper
-      ? getStorageUrl('outputs', paths.full_paper)
-      : null;
-
     for (const [key, path] of Object.entries(paths)) {
       if (!path) continue;
       const filename = path.split('/').pop();
 
-      // Determine page count
       let pageCount = '—';
       if (key === 'full_paper') {
         pageCount = edition.expected_pages || '—';
@@ -60,6 +54,8 @@ function buildEditionCards(editions) {
         pageCount = Array.isArray(sectionPages) ? sectionPages.length : '—';
       }
 
+      const pdfUrl = getStorageUrl('outputs', path);
+
       cards.push({
         date: edition.date,
         category: key,
@@ -68,10 +64,8 @@ function buildEditionCards(editions) {
         path,
         publishedAt: edition.published_at,
         pageCount,
-        // thumbnailUrl always shows cover (page 1 of full newspaper)
-        thumbnailUrl: fullPaperUrl || getStorageUrl('outputs', path),
-        // url is the actual PDF opened in the viewer
-        url: getStorageUrl('outputs', path),
+        // Each card shows page 1 of its own PDF as the thumbnail
+        url: pdfUrl,
       });
     }
   }
@@ -171,8 +165,7 @@ export default function EPaperViewer() {
               onClick={() => setSelectedCard(card)}
             >
               <div className="edition-card-preview">
-                {/* Always show cover (page 1 of full newspaper) as thumbnail */}
-                <PdfThumbnail url={card.thumbnailUrl} width={240} />
+                <PdfThumbnail url={card.url} width={240} />
                 <div className="edition-card-overlay">
                   <span className="overlay-btn">Read Edition</span>
                 </div>
