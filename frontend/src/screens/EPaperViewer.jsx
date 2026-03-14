@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getEditions, getStorageUrl } from '../api';
+import { getEditions, getStorageUrl, deleteOutputPdf } from '../api';
 import PdfThumbnail from '../components/PdfThumbnail';
 import PdfViewer from '../components/PdfViewer';
 import './EPaperViewer.css';
@@ -75,21 +75,44 @@ export default function EPaperViewer() {
   const [selectedCard, setSelectedCard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [deletingKey, setDeletingKey] = useState(null); // "date::category" while deleting
+  const [toast, setToast] = useState(null);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        const editionData = await getEditions();
-        setCards(buildEditionCards(editionData));
-      } catch (err) {
-        setError('Could not load editions.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const loadEditions = async () => {
+    try {
+      setLoading(true);
+      const editionData = await getEditions();
+      setCards(buildEditionCards(editionData));
+    } catch {
+      setError('Could not load editions.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadEditions(); }, []); // eslint-disable-line
+
+  const handleDelete = async (e, card) => {
+    e.stopPropagation(); // Don't open the viewer
+    if (!window.confirm(`Delete "${card.label}" (${card.date})?\n\nThis permanently removes the PDF from storage and cannot be undone.`)) return;
+
+    const key = `${card.date}::${card.category}`;
+    setDeletingKey(key);
+    try {
+      await deleteOutputPdf(card.date, card.category, card.path);
+      showToast(`Deleted ${card.label} (${card.date})`, 'success');
+      await loadEditions(); // Refresh the grid
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`, 'error');
+    } finally {
+      setDeletingKey(null);
+    }
+  };
 
   const filteredCards = activeTab === 'all' 
     ? cards 
@@ -97,6 +120,11 @@ export default function EPaperViewer() {
 
   return (
     <div className="epaper-page">
+      {/* Toast */}
+      {toast && (
+        <div className={`epaper-toast epaper-toast--${toast.type}`}>{toast.message}</div>
+      )}
+
       {/* Banner */}
       <div className="epaper-banner">
         <div className="banner-content">
@@ -155,30 +183,59 @@ export default function EPaperViewer() {
       {/* Edition Card Grid */}
       {!loading && filteredCards.length > 0 && (
         <div className="editions-grid">
-          {filteredCards.map((card, idx) => (
-            <div
-              key={idx}
-              className="edition-card"
-              onClick={() => setSelectedCard(card)}
-            >
-              <div className="edition-card-preview">
-                <PdfThumbnail url={card.url} width={240} />
-                <div className="edition-card-overlay">
-                  <span className="overlay-btn">Read Edition</span>
+          {filteredCards.map((card, idx) => {
+            const cardKey = `${card.date}::${card.category}`;
+            const isDeleting = deletingKey === cardKey;
+            return (
+              <div
+                key={idx}
+                className={`edition-card ${isDeleting ? 'edition-card--deleting' : ''}`}
+                onClick={() => !isDeleting && setSelectedCard(card)}
+              >
+                <div className="edition-card-preview">
+                  <PdfThumbnail url={card.url} width={240} />
+                  <div className="edition-card-overlay">
+                    <span className="overlay-btn">Read Edition</span>
+                  </div>
+                </div>
+                <div className="edition-card-body">
+                  <div className="edition-date">
+                    {new Date(card.date + 'T00:00:00').toLocaleDateString('en-GB', {
+                      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+                    })}
+                  </div>
+                  <div className="edition-meta">
+                    {card.pageCount !== '—' ? `${card.pageCount} pages` : 'View PDF'}
+                  </div>
+                  <button
+                    className="edition-delete-btn"
+                    onClick={(e) => handleDelete(e, card)}
+                    disabled={isDeleting}
+                    title={`Delete ${card.label} (${card.date})`}
+                  >
+                    {isDeleting ? (
+                      <>
+                        <svg className="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/>
+                        </svg>
+                        Deleting…
+                      </>
+                    ) : (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+                          <path d="M10 11v6M14 11v6"/>
+                          <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                        </svg>
+                        Delete PDF
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
-              <div className="edition-card-body">
-                <div className="edition-date">
-                  {new Date(card.date + 'T00:00:00').toLocaleDateString('en-GB', {
-                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-                  })}
-                </div>
-                <div className="edition-meta">
-                  {card.pageCount !== '—' ? `${card.pageCount} pages` : 'View PDF'}
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

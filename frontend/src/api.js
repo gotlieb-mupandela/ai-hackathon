@@ -270,6 +270,49 @@ export const getEdition = async (date) => {
 };
 
 /**
+ * Delete a single output PDF (e.g. sport.pdf) from the outputs bucket and
+ * remove its key from the edition's storage_paths in the DB.
+ * If the key is 'full_paper' the edition is also set back to 'draft'.
+ */
+export const deleteOutputPdf = async (date, storageKey, storagePath) => {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error('Supabase not configured');
+
+  // Remove the file from storage
+  if (storagePath) {
+    const { error: storageErr } = await supabase.storage
+      .from('outputs')
+      .remove([storagePath]);
+    if (storageErr) console.warn('Storage delete warning:', storageErr.message);
+  }
+
+  // Fetch the current edition row so we can patch storage_paths
+  const { data: edition, error: fetchErr } = await supabase
+    .from('editions')
+    .select('storage_paths, outputs, status')
+    .eq('date', date)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  const currentPaths = { ...(edition.storage_paths || edition.outputs || {}) };
+  delete currentPaths[storageKey];
+
+  const updates = {
+    storage_paths: currentPaths,
+    outputs: currentPaths,
+  };
+  if (storageKey === 'full_paper') {
+    updates.status = 'draft'; // Unpublish if the full paper is deleted
+  }
+
+  const { error: updateErr } = await supabase
+    .from('editions')
+    .update(updates)
+    .eq('date', date);
+  if (updateErr) throw updateErr;
+};
+
+/**
  * Fetch all editions, newest first.
  */
 export const getEditions = async () => {

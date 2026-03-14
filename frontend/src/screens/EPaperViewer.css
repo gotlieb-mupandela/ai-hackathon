@@ -259,6 +259,58 @@
 .edition-meta {
   font-size: 13px;
   color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.edition-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  transition: all 0.18s ease;
+  width: 100%;
+}
+.edition-delete-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: #ef4444;
+  color: #dc2626;
+}
+.edition-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.edition-card--deleting {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Toast notification */
+.epaper-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 9999;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  animation: slideUp 0.25s ease;
+}
+.epaper-toast--success { background: #166534; color: #fff; }
+.epaper-toast--error   { background: #991b1b; color: #fff; }
+@keyframes slideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* PDF Modal */
