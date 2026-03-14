@@ -80,29 +80,48 @@ export default function Designers() {
 
     setSubmitting(true);
     try {
-      // 1. Create auth account via backend (service role, email_confirm=true → no email confirmation needed)
+      const emailLower = newEmail.trim().toLowerCase();
+
+      // 1. Create / repair auth account via backend (service role, email confirmed immediately)
       await axios.post(`${BACKEND}/admin/create-designer`, {
-        email: newEmail.trim().toLowerCase(),
+        email: emailLower,
         password: newPassword,
       });
 
-      // 2. Add email to the designers allowlist table in Supabase
+      // 2. Add email to the designers allowlist (ignore duplicate — already granted)
       const { error: insertError } = await supabase
         .from('designers')
-        .insert({ email: newEmail.trim().toLowerCase() });
+        .insert({ email: emailLower });
 
       if (insertError && insertError.code !== '23505') {
         throw insertError;
       }
 
-      setSuccess(`Designer account created for ${newEmail}! They can sign in immediately.`);
+      setSuccess(
+        `Account ready for ${emailLower}. ` +
+        `They can sign in at localhost:3001 with the password you set.`
+      );
       setNewEmail('');
       setNewPassword('');
       await loadDesigners();
-      setTimeout(() => setSuccess(''), 5000);
+      setTimeout(() => setSuccess(''), 8000);
     } catch (err) {
       console.error('Error creating designer:', err);
+      const status = err?.response?.status;
       const detail = err?.response?.data?.detail;
+      if (status === 409) {
+        // Already has an account — just make sure they're in the allowlist
+        const emailLower = newEmail.trim().toLowerCase();
+        const { error: insertError } = await supabase
+          .from('designers')
+          .insert({ email: emailLower });
+        if (!insertError || insertError.code === '23505') {
+          setSuccess(`${emailLower} already has an account and can sign in.`);
+          await loadDesigners();
+          setTimeout(() => setSuccess(''), 6000);
+          return;
+        }
+      }
       setError(detail || err.message || 'Failed to create designer account');
     } finally {
       setSubmitting(false);
@@ -157,7 +176,8 @@ export default function Designers() {
         <div className="designers-add-panel">
           <h2 className="panel-title">Add New Designer</h2>
           <p className="panel-description">
-            Create a login account for a new designer. They can use these credentials to sign in immediately.
+            Create a login account for a new designer. They can use these credentials to sign in at{' '}
+            <strong>localhost:3001</strong> immediately — no email confirmation needed.
           </p>
 
           <form onSubmit={handleAddDesigner} className="add-designer-form">

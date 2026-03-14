@@ -15,114 +15,106 @@
   gap: 1rem;
 }
 
-/* Progress Panel */
-
-.dashboard-progress-panel {
-  background: linear-gradient(135deg, rgba(211, 47, 47, 0.85) 0%, rgba(27, 36, 69, 0.95) 100%);
+/* Hero Panel (Premium Gradient Style) */
+.admin-hero-panel {
+  background: linear-gradient(135deg, rgba(211, 47, 47, 0.9) 0%, rgba(27, 36, 69, 0.95) 100%);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-radius: var(--radius-xl);
-  padding: 2.5rem;
-  margin-bottom: 2.5rem;
+  border-radius: var(--radius-xl, 16px);
+  padding: 3.5rem 2rem;
+  margin-bottom: 3rem;
   box-shadow: 0 20px 40px rgba(211, 47, 47, 0.2);
   color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
   position: relative;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-.dashboard-progress-panel::after {
+.admin-hero-panel::after {
   content: '';
   position: absolute;
   top: 0; right: 0; bottom: 0; left: 0;
-  background: radial-gradient(circle at top right, rgba(255,255,255,0.2), transparent 50%);
+  background: radial-gradient(circle at top right, rgba(255,255,255,0.15), transparent 60%);
   pointer-events: none;
 }
 
-.progress-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 2rem;
-  gap: 1rem;
-  flex-wrap: wrap;
+.hero-stat-block {
+  text-align: center;
   position: relative;
   z-index: 2;
+  flex: 1;
 }
 
-.progress-title {
+.hero-stat-title {
   font-family: 'Outfit', sans-serif;
-  font-size: 1.5rem;
-  font-weight: 700;
-  margin-bottom: 0.5rem;
-  letter-spacing: -0.02em;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 1rem;
 }
 
-.progress-stats {
+.hero-stat-value {
+  font-family: 'Outfit', sans-serif;
+  font-size: 4rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 0.5rem;
-  font-family: 'Outfit', sans-serif;
-  font-size: 2.5rem;
-  font-weight: 800;
+  text-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  line-height: 1;
 }
 
 .stat-number {
   color: white;
-  text-shadow: 0 2px 10px rgba(0,0,0,0.2);
-}
-
-.stat-separator {
-  color: rgba(255, 255, 255, 0.6);
-  font-weight: 400;
-}
-
-.stat-total {
-  color: rgba(255, 255, 255, 0.8);
 }
 
 .stat-label {
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
-  margin-left: 0.25rem;
+  color: rgba(255, 255, 255, 0.7);
 }
 
-.progress-badges {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.badge {
-  padding: 0.5rem 1.25rem;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  white-space: nowrap;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.badge-running {
-  background: rgba(34, 197, 94, 0.2);
-  color: #fff;
-  border: 1px solid rgba(34, 197, 94, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.badge-complete {
-  background: rgba(16, 185, 129, 0.8);
+.stat-countdown {
+  font-variant-numeric: tabular-nums;
   color: white;
-  border: 1px solid rgba(16, 185, 129, 1);
-  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);
 }
 
-.badge-deadline {
+.hero-stat-hint {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.hero-divider {
+  width: 2px;
+  height: 120px;
   background: rgba(255, 255, 255, 0.15);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  z-index: 2;
 }
+
+@media (max-width: 768px) {
+  .admin-hero-panel {
+    flex-direction: column;
+    gap: 3rem;
+    padding: 3rem 1.5rem;
+  }
+  .hero-divider {
+    width: 100px;
+    height: 2px;
+  }
+  .hero-stat-value {
+    font-size: 3rem;
+  }
+}
+
 
 .progress-bar {
   height: 1.25rem;
@@ -196,7 +188,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 1.5rem 2rem;
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.4);
   border-bottom: 1px solid var(--border);
 }
 
@@ -238,14 +230,16 @@
   align-items: center;
   gap: 1.5rem;
   padding: 1.25rem 1.5rem;
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   transition: var(--transition);
 }
 
 .upload-card:hover {
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.6);
   border-color: var(--accent);
   box-shadow: var(--shadow-sm);
   transform: translateX(4px);

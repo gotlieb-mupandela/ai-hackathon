@@ -3,27 +3,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop') center/cover no-repeat;
   padding: 24px;
-  position: relative;
-}
-
-.auth-page::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(135deg, rgba(248,250,252,0.85) 0%, rgba(255,255,255,0.95) 100%);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  z-index: 1;
+  /* The background is transparent so the global mesh gradient from index.css shows through */
+  background: transparent;
 }
 
 .auth-card {
   width: 100%;
   max-width: 440px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
+  background: rgba(255, 255, 255, 0.65);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
@@ -31,11 +21,6 @@
   position: relative;
   z-index: 10;
   animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.auth-card--success {
-  text-align: center;
-  padding: 60px 48px;
 }
 
 .auth-header {
@@ -75,7 +60,7 @@
   border-left: 4px solid var(--error);
   border-radius: var(--radius-sm);
   font-size: 14px;
-  color: #fca5a5;
+  color: #ef4444;
   font-weight: 500;
   animation: fadeIn 0.3s ease;
 }
@@ -96,14 +81,14 @@
   border-radius: var(--radius);
   font-size: 16px;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.5);
   transition: all 0.3s ease;
 }
 
 .auth-input:focus {
   outline: none;
   border-color: var(--accent);
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.8);
   box-shadow: 0 0 0 4px rgba(211, 47, 47, 0.15);
 }
 
@@ -139,35 +124,4 @@
   opacity: 0.6;
   cursor: not-allowed;
   box-shadow: none;
-}
-
-.auth-footer {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-  font-size: 15px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.auth-footer a {
-  color: var(--accent-hover);
-  font-weight: 600;
-  margin-left: 6px;
-}
-
-.auth-footer a:hover {
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
-
-.auth-success-message {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--success);
-  margin: 0;
-  padding: 24px;
-  background: rgba(16, 185, 129, 0.1);
-  border-radius: var(--radius);
-  border: 1px solid rgba(16, 185, 129, 0.2);
 }

@@ -404,7 +404,7 @@ export default function Pipeline() {
     <div className="pipeline-page">
       {/* Header */}
       <div className="page-header">
-        <h1 className="page-title">Live Pipeline</h1>
+        <h1 className="page-title">Publish Edition</h1>
         <p className="page-subtitle">
           <strong>Step 4-9 Automation:</strong> When all expected pages are analyzed OR deadline is reached, the pipeline runs automatically.
           <br/>You can also click "Run Pipeline" below to start it manually.

@@ -14,6 +14,8 @@
 /* Calendar Panel */
 .calendar-panel {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 32px 24px;
@@ -78,7 +80,7 @@
   border-radius: 8px !important;
 }
 .react-calendar__tile--now {
-  background: var(--bg-elevated) !important;
+  background: rgba(255, 255, 255, 0.5) !important;
   color: var(--text-primary) !important;
 }
 
@@ -142,6 +144,8 @@
 /* Edition Detail Panel */
 .edition-detail-panel {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 32px;
@@ -179,7 +183,9 @@
   margin-bottom: 40px;
 }
 .stat-card {
-  background: var(--bg-elevated);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 24px 16px;
@@ -189,7 +195,7 @@
 .stat-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-sm);
-  background: var(--bg-card);
+  background: rgba(255, 255, 255, 0.6);
 }
 .stat-value {
   font-size: 32px;
@@ -223,7 +229,9 @@
 }
 .sections-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .section-row {
-  background: var(--bg-card);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
@@ -238,7 +246,9 @@
 /* Output files */
 .outputs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .output-row {
-  background: var(--bg-card);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
@@ -264,6 +274,8 @@
 .all-editions-section { margin-top: 48px; }
 .editions-table {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
@@ -274,7 +286,7 @@
   grid-template-columns: 2fr 1fr 1fr 1.5fr 1fr;
   gap: 16px;
   padding: 16px 24px;
-  background: var(--bg-elevated);
+  background: rgba(255, 255, 255, 0.4);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
@@ -314,6 +326,8 @@
 }
 .pdf-modal {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   width: 100%;

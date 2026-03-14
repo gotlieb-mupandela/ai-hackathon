@@ -9,7 +9,13 @@ import Pipeline from './screens/Pipeline';
 import EPaperViewer from './screens/EPaperViewer';
 import Archive from './screens/Archive';
 import Dashboard from './screens/Dashboard';
+import DesignerDashboard from './screens/DesignerDashboard';
 import Designers from './screens/Designers';
+import Subscriptions from './screens/Subscriptions';
+import Sections from './screens/Sections';
+import Periods from './screens/Periods';
+import Payments from './screens/Payments';
+import Users from './screens/Users';
 import Login from './screens/Login';
 import './App.css';
 
@@ -76,10 +82,18 @@ function PrivateLayout() {
               <>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/designers" element={<Designers />} />
+                {/* Management sub-routes */}
+                <Route path="/management/epapers" element={<EPaperViewer />} />
+                <Route path="/management/users" element={<Users />} />
+                <Route path="/management/subscriptions" element={<Subscriptions />} />
+                <Route path="/management/sections" element={<Sections />} />
+                <Route path="/management/periods" element={<Periods />} />
+                <Route path="/payments" element={<Payments />} />
               </>
             )}
+            <Route path="/designer-dashboard" element={<DesignerDashboard />} />
             <Route path="/upload" element={<Upload />} />
-            <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/pipeline" element={isAdmin ? <Pipeline /> : <Navigate to="/upload" replace />} />
             <Route path="/viewer" element={<EPaperViewer />} />
             <Route path="/archive" element={<Archive />} />
             <Route path="*" element={<Navigate to={defaultRoute} replace />} />

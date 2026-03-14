@@ -58,6 +58,27 @@
   transform: translateY(-1px);
 }
 
+.navbar-logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.navbar-logo-sun {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.navbar-logo-nepc {
+  font-family: 'Outfit', sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  color: #e50000;
+  letter-spacing: -0.5px;
+}
+
 .navbar-system-name {
   font-family: 'Outfit', sans-serif;
   font-weight: 800;
@@ -68,6 +89,7 @@
   -webkit-text-fill-color: transparent;
   letter-spacing: 0.5px;
   font-size: 18px;
+  margin-left: -16px;
 }
 
 .navbar-badge {

@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [uploadsByDesigner, setUploadsByDesigner] = useState({});
+  const [countdown, setCountdown] = useState('');
   const todayStr = getTodayStr();
 
   const groupUploadsByDesigner = useCallback((pages) => {
@@ -61,6 +62,33 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
+  // Countdown timer for deadline
+  useEffect(() => {
+    if (!status?.deadline) return;
+
+    const updateCountdown = () => {
+      const now = new Date();
+      const today = getTodayStr();
+      const [hours, minutes] = status.deadline.split(':');
+      const deadline = new Date(`${today}T${hours}:${minutes}:00`);
+
+      const diff = deadline - now;
+      if (diff <= 0) {
+        setCountdown('Time to publish!');
+        return;
+      }
+
+      const hrs = Math.floor(diff / (1000 * 60 * 60));
+      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const secs = Math.floor((diff % (1000 * 60)) / 1000);
+      setCountdown(`${hrs}h ${mins}m ${secs}s`);
+    };
+
+    updateCountdown();
+    const countdownInterval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(countdownInterval);
+  }, [status?.deadline]);
+
   const getStatusBadgeClass = (pageStatus) => {
     const statusMap = {
       uploaded: 'status-uploaded',
@@ -70,11 +98,6 @@ export default function Dashboard() {
       error: 'status-error',
     };
     return statusMap[pageStatus] || 'status-default';
-  };
-
-  const getProgressPercentage = () => {
-    if (!status) return 0;
-    return Math.round((status.uploaded_count / status.expected_pages) * 100);
   };
 
   if (loading) {
@@ -98,33 +121,30 @@ export default function Dashboard() {
       </header>
 
       {/* Overall Progress */}
-      <div className="dashboard-progress-panel">
-        <div className="progress-header">
-          <div className="progress-info">
-            <h3 className="progress-title">Edition Progress</h3>
-            <div className="progress-stats">
-              <span className="stat-number">{status?.uploaded_count || 0}</span>
-              <span className="stat-separator">/</span>
-              <span className="stat-total">{status?.expected_pages || 0}</span>
-              <span className="stat-label">pages</span>
-            </div>
+      <div className="admin-hero-panel">
+        <div className="hero-stat-block">
+          <h3 className="hero-stat-title">Total Uploads Today</h3>
+          <div className="hero-stat-value">
+            <span className="stat-number">{status?.uploaded_count || 0}</span>
+            <span className="stat-label">pages</span>
           </div>
-          <div className="progress-badges">
-            {status?.is_complete && (
-              <span className="badge badge-complete">Published</span>
-            )}
-            <span className="badge badge-deadline">
-              Deadline: {status?.deadline || '15:00'}
-            </span>
-          </div>
+          <p className="hero-stat-hint">From all designers</p>
         </div>
-        <div className="progress-bar">
-          <div
-            className="progress-fill"
-            style={{ width: `${getProgressPercentage()}%` }}
-          >
-            <span className="progress-label">{getProgressPercentage()}%</span>
+
+        <div className="hero-divider"></div>
+
+        <div className="hero-stat-block">
+          <h3 className="hero-stat-title">Publication Deadline</h3>
+          <div className="hero-stat-value">
+            <span className="stat-countdown">{countdown || status?.deadline || '15:00'}</span>
           </div>
+          <p className="hero-stat-hint">
+            {status?.is_complete ? (
+              <span style={{ color: '#34d399', fontWeight: 'bold' }}>✓ Edition Published</span>
+            ) : (
+              'Pipeline auto-runs at this time'
+            )}
+          </p>
         </div>
       </div>
 

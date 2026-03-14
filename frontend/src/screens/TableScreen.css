@@ -1,0 +1,335 @@
+/* ================================================================
+   TableScreen.css — shared glassy table styles for
+   Subscriptions, Users, Payments (and any future list screen).
+   ================================================================ */
+
+/* ─── Page header ──────────────────────────────────────────────── */
+
+.ts-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1.75rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.ts-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.ts-bc-sep   { opacity: 0.5; }
+.ts-bc-active { color: var(--accent); font-weight: 600; }
+
+/* ─── Toolbar ──────────────────────────────────────────────────── */
+
+.ts-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.ts-search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.ts-search-ico {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.ts-search {
+  width: 100%;
+  padding: 0.6rem 0.75rem 0.6rem 2.25rem;
+  background: var(--bg-card);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.ts-search:focus { border-color: var(--accent); }
+
+.ts-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.ts-filter-select {
+  padding: 0.6rem 2rem 0.6rem 0.9rem;
+  background: var(--bg-card);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+  transition: border-color 0.2s;
+}
+
+.ts-filter-select:focus { border-color: var(--accent); }
+
+/* ─── Table wrapper ────────────────────────────────────────────── */
+
+.ts-table-wrap {
+  background: var(--bg-card);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+
+.ts-col-header,
+.ts-row {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.ts-col-header {
+  background: rgba(255, 255, 255, 0.35);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.ts-row {
+  border-bottom: 1px solid var(--border-light, var(--border));
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: background 0.15s;
+}
+
+.ts-row:last-of-type { border-bottom: none; }
+.ts-row:hover        { background: rgba(255, 255, 255, 0.22); }
+
+/* ─── Grid column templates ────────────────────────────────────── */
+
+.subs-grid     { grid-template-columns: 60px 100px 1.8fr 1.2fr 90px 80px 110px 80px; }
+.users-grid    { grid-template-columns: 1.4fr 1.6fr 110px 80px 90px 1fr 80px 120px; }
+.payments-grid { grid-template-columns: 60px 1.5fr 90px 120px 1.4fr 1fr 70px 100px 80px; }
+
+/* ─── Cell variants ────────────────────────────────────────────── */
+
+.ts-id   { font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ts-name { font-weight: 700; color: var(--text-primary); }
+.ts-email { font-size: 0.88rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-muted { font-size: 0.88rem; color: var(--text-muted); }
+.ts-cost  { font-weight: 700; color: var(--text-primary); }
+.ts-ref   { font-size: 0.82rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Section chip (coloured text) */
+.ts-section-chip {
+  font-weight: 600;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+/* Bool chip */
+.ts-bool-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.ts-bool-true  { background: rgba(16,185,129,0.12); color: #10b981; }
+.ts-bool-false { background: rgba(239,68,68,0.1);   color: #ef4444; }
+
+/* Status badge */
+.ts-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.ts-status--active   { background: rgba(16,185,129,0.12); color: #10b981; }
+.ts-status--inactive { background: rgba(148,163,184,0.12); color: #94a3b8; }
+
+/* Method chip */
+.ts-method-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.method--transfer { background: rgba(16,185,129,0.12); color: #10b981; }
+.method--cash     { background: rgba(30,30,30,0.25);   color: var(--text-primary); }
+.method--card     { background: rgba(99,102,241,0.12); color: #6366f1; }
+
+/* Action buttons */
+.ts-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Dot toggle button */
+.action-btn--dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.dot--active   { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.3); }
+.dot--inactive { background: #94a3b8; box-shadow: 0 0 0 2px rgba(148,163,184,0.3); }
+
+.action-btn--dot:hover { transform: scale(1.3); }
+
+/* ─── Pagination footer ────────────────────────────────────────── */
+
+.ts-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.25rem;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.ts-showing {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+.ts-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.page-ellipsis {
+  padding: 0 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ─── Modal ────────────────────────────────────────────────────── */
+
+.ts-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: tsFadeIn 0.2s ease;
+}
+
+@keyframes tsFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.ts-modal {
+  background: var(--bg-elevated, var(--bg-card));
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  width: 100%;
+  max-width: 500px;
+  padding: 2rem;
+  animation: tsSlideUp 0.25s ease;
+}
+
+.ts-modal--sm { max-width: 380px; }
+
+@keyframes tsSlideUp { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+.ts-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.ts-modal-header h2 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* ─── Form ─────────────────────────────────────────────────────── */
+
+.ts-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+.form-checkbox-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+  color: var(--text-secondary) !important;
+}
+
+.form-checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

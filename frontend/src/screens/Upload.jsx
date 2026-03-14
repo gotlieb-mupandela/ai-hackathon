@@ -250,7 +250,7 @@ export default function Upload() {
       {isAdmin && (
         <div className="settings-bar">
           <div className="settings-info">
-            <strong>📋 Daily Edition Settings</strong>
+            <strong>Daily Edition Settings</strong>
             <p style={{margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-muted)'}}>
               Set your publication deadline. The pipeline will auto-run at that time.
             </p>

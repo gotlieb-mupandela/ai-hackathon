@@ -64,7 +64,7 @@
 }
 
 .settings-input {
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.5);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text-primary);
@@ -74,7 +74,7 @@
   font-weight: 500;
   transition: all 0.3s ease;
 }
-.settings-input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(211, 47, 47, 0.15); background: var(--bg-secondary); }
+.settings-input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(211, 47, 47, 0.15); background: rgba(255, 255, 255, 0.8); }
 
 .settings-save-btn {
   background: linear-gradient(135deg, var(--accent) 0%, #b71c1c 100%);
@@ -174,7 +174,7 @@
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   margin-bottom: 40px;
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.3);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -224,7 +224,7 @@
   grid-template-columns: 2fr 0.8fr 1.2fr 2.5fr 1fr 1fr 40px;
   gap: 20px;
   padding: 16px 28px;
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.4);
   font-family: 'Outfit', sans-serif;
   font-size: 13px;
   font-weight: 700;
@@ -238,7 +238,7 @@
   grid-template-columns: 2fr 0.8fr 1.2fr 2.5fr 1fr 1fr 40px;
   gap: 20px;
   padding: 20px 28px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-light);
   font-size: 15px;
   color: var(--text-secondary);
   align-items: center;

@@ -121,7 +121,8 @@
   justify-content: center;
   flex-shrink: 0;
   border: 2px solid var(--border);
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(4px);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
@@ -149,7 +150,7 @@
 .step-status-text--running { color: var(--accent); }
 .step-status-text--done { color: var(--success); }
 .step-status-text--error { color: var(--error); }
-.step-elapsed { font-size: 13px; color: var(--text-secondary); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; background: var(--bg-secondary); padding: 4px 10px; border-radius: 6px; font-weight: 600; border: 1px solid var(--border); }
+.step-elapsed { font-size: 13px; color: var(--text-secondary); font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; background: rgba(255, 255, 255, 0.5); padding: 4px 10px; border-radius: 6px; font-weight: 600; border: 1px solid var(--border); }
 
 .steps-empty { color: var(--text-muted); font-size: 15px; padding: 20px 0; font-weight: 500; text-align: center; font-style: italic; }
 
@@ -192,7 +193,7 @@
 }
 
 .log-terminal-header {
-  background: #1e293b;
+  background: rgba(30, 41, 59, 0.85);
   padding: 16px 24px;
   border-bottom: 1px solid rgba(0,0,0,0.5);
   display: flex;
@@ -225,7 +226,7 @@
 
 .log-terminal {
   flex: 1;
-  background: #0f172a;
+  background: rgba(15, 23, 42, 0.85);
   padding: 24px;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 14px;

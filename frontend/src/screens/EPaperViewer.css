@@ -6,6 +6,8 @@
 /* Banner */
 .epaper-banner {
   background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-card) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   padding: 64px 20px;
   display: flex;
   justify-content: center;
@@ -94,6 +96,8 @@
   padding: 10px 24px;
   border-radius: 30px;
   background: var(--bg-card);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: 14px;
@@ -137,7 +141,9 @@
   text-align: center;
   padding: 80px 40px;
   color: var(--text-muted);
-  background: white;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px dashed var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
@@ -169,6 +175,8 @@
 
 .edition-card {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -257,7 +265,8 @@
 .pdf-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -267,6 +276,8 @@
 
 .pdf-modal {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   width: 100%;

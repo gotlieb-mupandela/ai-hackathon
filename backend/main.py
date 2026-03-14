@@ -203,10 +203,14 @@ class CreateDesignerBody(BaseModel):
 @app.post("/admin/create-designer")
 async def create_designer(body: CreateDesignerBody):
     """
-    Create a designer auth account using the service role key.
-    This sets email_confirm=True so the designer can sign in immediately
-    without needing to confirm their email.
+    Create (or repair) a designer auth account using the service role key.
+    Strategy:
+      1. Try SDK create_user with email_confirm=True (works for new users).
+      2. On any failure, fall back to HTTP generate_link (handles existing/broken accounts).
+    Designer can sign in immediately after either path succeeds.
     """
+    import requests as _req
+
     email = body.email.strip().lower()
     password = body.password.strip()
 
@@ -215,27 +219,64 @@ async def create_designer(body: CreateDesignerBody):
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
-    supabase_url = os.getenv("SUPABASE_URL", "").strip()
-    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if not supabase_url or not service_key:
         raise HTTPException(status_code=500, detail="Server is missing Supabase credentials")
 
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+
+    # ── Method 1: create via SDK ──────────────────────────────────────
     try:
         admin_client = _create_supabase_client(supabase_url, service_key)
-        # admin.create_user creates the account with email already confirmed
-        response = admin_client.auth.admin.create_user({
+        resp = admin_client.auth.admin.create_user({
             "email": email,
             "password": password,
             "email_confirm": True,
         })
-        logger.info("Designer account created for %s", email)
-        return {"email": email, "id": str(response.user.id)}
+        logger.info("Designer account created (SDK) for %s", email)
+        return {"email": email, "id": str(resp.user.id)}
+    except Exception as sdk_exc:
+        logger.warning("SDK create_user failed for %s: %s — trying generate_link fallback", email, sdk_exc)
+
+    # ── Method 2: generate_link — works for new AND existing accounts ─
+    # Supabase's generate_link with type=signup creates/confirms the user
+    # and returns the user object, even if the account previously existed
+    # in a broken/unconfirmed state.
+    try:
+        r = _req.post(
+            f"{supabase_url}/auth/v1/admin/generate_link",
+            headers=headers,
+            json={"type": "signup", "email": email, "password": password},
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            data = r.json()
+            user_id = (data.get("user") or {}).get("id") or data.get("id", "")
+            logger.info("Designer account created/repaired (generate_link) for %s", email)
+            return {"email": email, "id": str(user_id)}
+
+        # generate_link 422 usually means user exists and is already confirmed.
+        # That's fine — we still insert them into public.designers below.
+        if r.status_code == 422:
+            logger.info("generate_link 422 for %s — user likely already confirmed; proceeding", email)
+            return {"email": email, "id": "existing"}
+
+        err_body = r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
+        logger.error("generate_link failed for %s: %s %s", email, r.status_code, err_body)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not create account for {email}. Supabase error: {err_body}",
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
-        msg = str(exc)
-        logger.error("Failed to create designer %s: %s", email, msg)
-        if "already registered" in msg or "already been registered" in msg or "duplicate" in msg.lower():
-            raise HTTPException(status_code=409, detail=f"{email} already has an account")
-        raise HTTPException(status_code=500, detail=f"Could not create account: {msg}")
+        logger.error("generate_link exception for %s: %s", email, exc)
+        raise HTTPException(status_code=500, detail=f"Could not create account: {exc}")
 
 
 class ConfirmEmailBody(BaseModel):

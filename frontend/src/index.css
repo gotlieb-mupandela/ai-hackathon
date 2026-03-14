@@ -8,15 +8,16 @@
 :root {
   /* ── New Era Brand Palette ─────────────────────────────── */
 
-  /* Backgrounds (Light Theme) */
-  --bg-primary: #ffffff;          /* White */
-  --bg-secondary: #f8fafc;        /* Lighter panel background */
-  --bg-card: rgba(255, 255, 255, 0.9); /* Glassy card */
-  --bg-elevated: #ffffff;
+  /* Backgrounds (Glassy Theme) */
+  --bg-primary: #f0f4f8;          /* Base fallback */
+  --bg-secondary: rgba(255, 255, 255, 0.4); /* Lighter panel background */
+  --bg-card: rgba(255, 255, 255, 0.65); /* Glassy card */
+  --bg-elevated: rgba(255, 255, 255, 0.75);
 
   /* Borders */
-  --border: rgba(0, 0, 0, 0.1);
-  --border-light: rgba(0, 0, 0, 0.05);
+  --border: rgba(255, 255, 255, 0.5);
+  --border-light: rgba(255, 255, 255, 0.3);
+  --border-dark: rgba(0, 0, 0, 0.05);
 
   /* ── Accent: New Era Red ─────────────────────────────── */
   --accent: #D32F2F;              /* Brand red — masthead, active states */
@@ -64,12 +65,15 @@ html, body {
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background-color: var(--bg-primary);
-  /* Subtle ambient pattern/glow for light mode */
-  background-image:
-    radial-gradient(circle at 10% 70%, rgba(211, 47, 47, 0.03), transparent 30%),
-    radial-gradient(circle at 90% 20%, rgba(27, 36, 69, 0.03), transparent 30%);
+  background-color: #f0f4f8;
+  /* Glassy mesh gradient background */
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(353,100%,73%,0.25) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, hsla(225,39%,30%,0.2) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, hsla(353,100%,73%,0.25) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, hsla(225,39%,30%,0.2) 0px, transparent 50%);
   background-attachment: fixed;
+  background-size: cover;
   color: var(--text-primary);
   font-size: 15px;
   line-height: 1.6;
@@ -91,15 +95,18 @@ h1, h2, h3, h4, h5, h6, .display-font {
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(255, 255, 255, 0.2);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 5px;
-  border: 2px solid var(--bg-primary);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.25);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* Common Page Header */
@@ -161,6 +168,14 @@ input, select, textarea {
   font-family: inherit;
   outline: none;
   transition: var(--transition);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+input:focus, select:focus, textarea:focus {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: var(--accent);
 }
 
 a {

@@ -25,6 +25,8 @@
 
 .designers-add-panel {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-radius: var(--radius-md);
   padding: 2rem;
   box-shadow: var(--shadow-md);
@@ -76,7 +78,7 @@
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 1rem;
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.5);
   color: var(--text-primary);
   transition: all 0.2s;
 }
@@ -85,7 +87,7 @@
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.15);
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .email-input::placeholder {
@@ -196,6 +198,8 @@
 
 .designers-list-panel {
   background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-radius: var(--radius-md);
   padding: 2rem;
   box-shadow: var(--shadow-md);
@@ -213,13 +217,16 @@
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   transition: all 0.2s;
 }
 
 .designer-card:hover {
+  background: rgba(255, 255, 255, 0.6);
   border-color: var(--accent);
   box-shadow: var(--shadow-sm);
   transform: translateX(2px);
