@@ -203,18 +203,52 @@ async def toggle_auto_send():
 @app.post("/notify-subscribers")
 async def notify_subscribers(body: NotifyBody):
     """
-    Trigger WhatsApp delivery to all subscribers.
-    If Green API is configured, sends messages directly.
-    Otherwise returns wa.me links the admin can click to send manually.
+    Trigger WhatsApp delivery via local whatsapp-web.js agent.
+    Calls localhost:5000/send which sends PDFs using your real WhatsApp.
+    Falls back to wa.me links if agent is not running.
     """
+    import requests as _req
+    from pathlib import Path
+
     if not body.edition_date.strip():
         raise HTTPException(status_code=400, detail="edition_date is required")
 
     logger.info("Sending WhatsApp notifications for edition %s", body.edition_date)
 
+    # Check if local WhatsApp agent is running
+    try:
+        health = _req.get("http://localhost:5000/health", timeout=2)
+        agent_ready = health.status_code == 200 and health.json().get("status") == "ready"
+    except Exception:
+        agent_ready = False
+
+    if agent_ready:
+        # Send via local WhatsApp agent (downloads PDFs from Supabase and sends)
+        try:
+            supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+            resp = _req.post(
+                "http://localhost:5000/send",
+                json={"edition_date": body.edition_date, "supabase_url": supabase_url},
+                timeout=300
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            logger.info("WhatsApp agent sent: %d, failed: %d", data.get("sent", 0), data.get("failed", 0))
+            return {
+                "status": "sent",
+                "sent": data.get("sent", 0),
+                "failed": data.get("failed", 0),
+                "using_api": True,
+                "edition_date": body.edition_date
+            }
+        except Exception as exc:
+            logger.error("WhatsApp agent failed: %s", exc)
+            # Fall through to wa.me links
+
+    # Fallback: generate wa.me links
     try:
         result = send_pdf_to_all(body.edition_date)
-        result["status"] = "sent" if result.get("using_api") else "links"
+        result["status"] = "links"
         result["edition_date"] = body.edition_date
         return result
     except Exception as exc:

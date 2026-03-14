@@ -1,0 +1,15 @@
+# Node modules
+node_modules/
+package-lock.json
+
+# WhatsApp session data (auto-generated, don't commit)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
