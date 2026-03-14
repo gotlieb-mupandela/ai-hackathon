@@ -774,7 +774,7 @@ async def agent_query(body: AgentQuery):
         # Try Ollama first
         try:
             import ollama
-            ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+            ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
             
             logger.info("Attempting agent query via Ollama (%s)", ollama_model)
             response = ollama.chat(
