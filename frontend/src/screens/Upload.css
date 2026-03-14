@@ -245,19 +245,30 @@
   transition: all 0.2s ease;
 }
 .file-delete-btn {
-  background: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
   cursor: pointer;
-  font-size: 16px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  opacity: 0.5;
-  transition: all 0.2s ease;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 8px;
+  transition: all 0.18s ease;
   justify-self: center;
+  white-space: nowrap;
 }
 .file-delete-btn:hover {
-  opacity: 1;
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.18);
+  border-color: #ef4444;
+  color: #dc2626;
+  transform: scale(1.04);
+}
+.file-delete-btn:active {
+  transform: scale(0.97);
 }
 .file-list-row:last-child { border-bottom: none; }
 .file-list-row:hover { background: rgba(255, 255, 255, 0.03); transform: translateX(2px); }
