@@ -402,33 +402,29 @@ export default function Pipeline() {
 
       updateStep(3, 'done', Date.now() - start);
 
-      // ── Step 4: Upload Full Paper + All Section PDFs in parallel ────
+      // ── Step 4: Upload Full Paper + All Section PDFs (sequential + retry) ────
       start = Date.now();
       updateStep(4, 'running');
       addLog(`Uploading full paper + ${Object.keys(sectionOutputs).length} section PDFs to storage...`);
 
       const storagePaths = {};
-      const uploadTasks = [];
 
       // Upload full newspaper
       const fullPaperPath = `${todayStr}/full_paper.pdf`;
-      uploadTasks.push(
-        uploadToStorage('outputs', fullPaperPath, new Blob([fullPaperBytes], { type: 'application/pdf' }))
-          .then(() => { storagePaths.full_paper = fullPaperPath; addLog('  Uploaded full_paper.pdf'); })
-      );
+      await uploadToStorage('outputs', fullPaperPath, new Blob([fullPaperBytes], { type: 'application/pdf' }));
+      storagePaths.full_paper = fullPaperPath;
+      addLog('  Uploaded full_paper.pdf');
 
       // Upload each section PDF
       for (const [section, { bytes, filename }] of Object.entries(sectionOutputs)) {
         const path = `${todayStr}/${filename}`;
         const key = section.toLowerCase().replace(/[^a-z0-9]/g, '');
-        uploadTasks.push(
-          uploadToStorage('outputs', path, new Blob([bytes], { type: 'application/pdf' }))
-            .then(() => { storagePaths[key] = path; addLog(`  Uploaded ${filename}`); })
-        );
+        await uploadToStorage('outputs', path, new Blob([bytes], { type: 'application/pdf' }));
+        storagePaths[key] = path;
+        addLog(`  Uploaded ${filename}`);
       }
 
-      await Promise.all(uploadTasks);
-      addLog(`All ${uploadTasks.length} PDFs uploaded`);
+      addLog(`All ${1 + Object.keys(sectionOutputs).length} PDFs uploaded`);
       updateStep(4, 'done', Date.now() - start);
 
       // ── Step 5: Publish Edition ─────────────────────────────────────
@@ -471,21 +467,25 @@ export default function Pipeline() {
       setIsComplete(true);
       addLog('=== Pipeline complete — edition published ===');
 
-      // Send WhatsApp notifications to all subscribers
+      // Send WhatsApp notifications — auto-open each link in a new tab
       try {
         addLog('Sending WhatsApp notifications to subscribers...');
         const notifyResult = await notifySubscribers(todayStr);
 
         if (notifyResult.status === 'sent') {
           addLog(`WhatsApp messages sent via API: ${notifyResult.sent} delivered, ${notifyResult.failed} failed`);
-        } else if (notifyResult.status === 'links') {
-          addLog(`WhatsApp API not configured — ${notifyResult.sent} wa.me links generated.`);
-          if (notifyResult.links?.length > 0) {
-            notifyResult.links.forEach(entry => {
-              addLog(`  ${entry.phone} [${entry.sections.join(', ')}] → ${entry.link}`);
-            });
-            addLog('Click the links above to send messages manually via WhatsApp Web.');
+        } else if (notifyResult.status === 'links' && notifyResult.links?.length > 0) {
+          addLog(`Opening ${notifyResult.links.length} WhatsApp message(s) automatically...`);
+          for (let i = 0; i < notifyResult.links.length; i++) {
+            const entry = notifyResult.links[i];
+            addLog(`  Opening WhatsApp for ${entry.phone} [${entry.sections.join(', ')}]`);
+            window.open(entry.link, '_blank');
+            // Stagger tab opens so WhatsApp Web doesn't choke
+            if (i < notifyResult.links.length - 1) {
+              await new Promise(r => setTimeout(r, 3000));
+            }
           }
+          addLog('All WhatsApp tabs opened — press Send in each tab.');
         } else if (notifyResult.skipped) {
           addLog('WhatsApp auto-send is disabled — skipped.');
         }

@@ -13,6 +13,22 @@ import { getSupabaseClient } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
+function clearStaleSupabaseTokens() {
+  if (typeof window === 'undefined') return;
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const k = window.localStorage.key(i);
+      if (k && k.includes('auth-token')) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
@@ -21,9 +37,6 @@ export function AuthProvider({ children }) {
 
   // Detect user role based on admins and designers tables. Returns 'admin' | 'designer' | null.
   const detectRole = async (userEmail) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7680/ingest/252db5ef-7e2f-445f-a476-cb337fcdcf2d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2b4bbe'},body:JSON.stringify({sessionId:'2b4bbe',location:'AuthContext.jsx:detectRole:entry',message:'detectRole called',data:{email:userEmail?.substring(0,3)+'***'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     const supabase = getSupabaseClient();
     if (!supabase || !userEmail) {
       setRole(null);
@@ -37,10 +50,6 @@ export function AuthProvider({ children }) {
         .select('email')
         .eq('email', userEmail)
         .maybeSingle();
-
-      // #region agent log
-      fetch('http://127.0.0.1:7680/ingest/252db5ef-7e2f-445f-a476-cb337fcdcf2d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2b4bbe'},body:JSON.stringify({sessionId:'2b4bbe',location:'AuthContext.jsx:detectRole:adminCheck',message:'admins query result',data:{hasAdminData:!!adminData,adminError:adminError?.message},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
 
       if (!adminError && adminData) {
         setRole('admin');
@@ -73,16 +82,9 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Bootstrap admin check failed:', err);
       }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7680/ingest/252db5ef-7e2f-445f-a476-cb337fcdcf2d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2b4bbe'},body:JSON.stringify({sessionId:'2b4bbe',location:'AuthContext.jsx:detectRole:setNull',message:'setting role to null',data:{},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       setRole(null);
       return null;
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7680/ingest/252db5ef-7e2f-445f-a476-cb337fcdcf2d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2b4bbe'},body:JSON.stringify({sessionId:'2b4bbe',location:'AuthContext.jsx:detectRole:catch',message:'detectRole threw',data:{err:err?.message},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       console.error('Error detecting role:', err);
       setRole(null);
       return null;
@@ -101,7 +103,16 @@ export function AuthProvider({ children }) {
       done = true;
       setLoading(false);
     };
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: s }, error }) => {
+      if (error && String(error.message || '').includes('Invalid Refresh Token')) {
+        clearStaleSupabaseTokens();
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+        setRole(null);
+        finish();
+        return;
+      }
       setSession(s);
       setUser(s?.user ?? null);
       finish();
@@ -187,9 +198,6 @@ export function AuthProvider({ children }) {
       });
       roleResult = await detectRole(data.user.email);
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7680/ingest/252db5ef-7e2f-445f-a476-cb337fcdcf2d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'2b4bbe'},body:JSON.stringify({sessionId:'2b4bbe',location:'AuthContext.jsx:signIn:return',message:'signIn returning',data:{roleReturned:roleResult},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     return { ...data, role: roleResult };
   };
 

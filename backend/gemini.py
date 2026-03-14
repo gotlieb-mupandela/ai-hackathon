@@ -142,24 +142,24 @@ def _analyze_with_openrouter(image_path: str, api_key: str, retries: int) -> dic
     """Send the page image to OpenRouter vision model and parse the JSON response."""
     model = os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct")
 
-    # Load and optionally convert image to JPEG
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
+    # Load image, compress aggressively — AI only needs to read headlines/keywords
+    img = Image.open(image_path)
+    if img.mode in ("P", "RGBA"):
+        img = img.convert("RGB")
 
-    mime_type = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
-    if mime_type == "image/png":
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode in ("P", "RGBA"):
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=70, optimize=True)
-        image_bytes = buf.getvalue()
-        mime_type = "image/jpeg"
+    # Shrink large images to max 800px — keeps base64 payload small and API fast
+    MAX_DIM = 800
+    if max(img.size) > MAX_DIM:
+        img.thumbnail((MAX_DIM, MAX_DIM))
+
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=40, optimize=True)
+    image_bytes = buf.getvalue()
 
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    data_url  = f"data:{mime_type};base64,{image_b64}"
+    data_url  = f"data:image/jpeg;base64,{image_b64}"
 
-    logger.info("Sending page image to OpenRouter/%s (%d bytes)", model, len(image_bytes))
+    logger.info("Sending page to OpenRouter/%s (%d KB)", model, len(image_bytes) // 1024)
 
     payload = {
         "model": model,
@@ -190,7 +190,7 @@ def _analyze_with_openrouter(image_path: str, api_key: str, retries: int) -> dic
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=60,
+                timeout=120,
             )
             resp.raise_for_status()
             raw_text = resp.json()["choices"][0]["message"]["content"].strip()

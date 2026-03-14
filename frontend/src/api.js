@@ -15,6 +15,8 @@ const analyzer = axios.create({
   timeout: 180000, // 3 min — allows for OpenRouter vision model response times
 });
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // ─── PDF Analysis (Python backend) ──────────────────────────
 
 /**
@@ -84,15 +86,32 @@ export const uploadToStorage = async (bucket, path, file) => {
   const supabase = getSupabaseClient();
   if (!supabase) throw new Error('Supabase not configured');
 
-  const { data, error } = await supabase.storage
-    .from(bucket)
-    .upload(path, file, {
-      cacheControl: '3600',
-      upsert: true,
-    });
+  let lastError = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, file, {
+        cacheControl: '3600',
+        upsert: true,
+      });
 
-  if (error) throw error;
-  return data;
+    if (!error) return data;
+    lastError = error;
+
+    // Retry transient network/protocol errors with backoff.
+    const errMsg = String(error.message || '').toLowerCase();
+    const retryable =
+      errMsg.includes('failed to fetch') ||
+      errMsg.includes('network') ||
+      errMsg.includes('http2') ||
+      errMsg.includes('timeout') ||
+      errMsg.includes('econnreset');
+
+    if (!retryable || attempt === 4) break;
+    await sleep(attempt * 1200);
+  }
+
+  throw lastError || new Error('Upload failed');
 };
 
 /**

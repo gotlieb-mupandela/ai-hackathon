@@ -77,9 +77,9 @@ async def analyze_pdf(file: UploadFile = File(...)):
             tmp_pdf.write(content)
             tmp_pdf_path = tmp_pdf.name
 
-        # Fast conversion: 150 DPI is enough for Gemini to read text
+        # Low DPI + small image = fast upload to vision API
         images = convert_from_path(
-            tmp_pdf_path, dpi=150, first_page=1, last_page=1,
+            tmp_pdf_path, dpi=100, first_page=1, last_page=1,
             poppler_path=POPPLER_PATH,
             thread_count=4,
         )
@@ -88,13 +88,13 @@ async def analyze_pdf(file: UploadFile = File(...)):
 
         img = images[0]
 
-        # Downscale large images — Gemini only needs ~1200px wide to read text
-        MAX_DIM = 1400
+        # Keep images small — AI only needs to read text, not pixel-perfect detail
+        MAX_DIM = 900
         if max(img.size) > MAX_DIM:
             img.thumbnail((MAX_DIM, MAX_DIM))
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-            img.save(tmp_img, "JPEG", quality=70, optimize=True)
+            img.save(tmp_img, "JPEG", quality=45, optimize=True)
             tmp_img.flush()
             os.fsync(tmp_img.fileno())
             tmp_img_path = tmp_img.name
