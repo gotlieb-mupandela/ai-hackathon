@@ -5,7 +5,8 @@
  */
 import { createClient } from '@supabase/supabase-js';
 
-let cachedClient = null;
+// Use window-level key so the singleton survives hot-module reloads in dev
+const SINGLETON_KEY = '__newera_supabase_client__';
 let warnedMissingConfig = false;
 
 function readSupabaseConfig() {
@@ -22,8 +23,8 @@ function readSupabaseConfig() {
 }
 
 export function getSupabaseClient() {
-  if (cachedClient) {
-    return cachedClient;
+  if (typeof window !== 'undefined' && window[SINGLETON_KEY]) {
+    return window[SINGLETON_KEY];
   }
 
   const { supabaseUrl, supabaseAnonKey } = readSupabaseConfig();
@@ -38,14 +39,19 @@ export function getSupabaseClient() {
     return null;
   }
 
-  cachedClient = createClient(supabaseUrl, supabaseAnonKey, {
+  const client = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
     },
   });
-  return cachedClient;
+
+  if (typeof window !== 'undefined') {
+    window[SINGLETON_KEY] = client;
+  }
+
+  return client;
 }
 
 export const supabase = getSupabaseClient();
