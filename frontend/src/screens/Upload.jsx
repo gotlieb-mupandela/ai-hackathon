@@ -4,12 +4,81 @@ import {
   getPages,
   insertPage,
   deletePage,
+  updatePage,
   uploadToStorage,
   getOrCreateTodayEdition,
   upsertEdition,
 } from '../api';
 import { useAuth } from '../context/AuthContext';
 import './Upload.css';
+
+/**
+ * Ordered keyword → section pairs for instant in-browser classification.
+ * Most-specific keywords come first to prevent false positives.
+ */
+const SECTION_TEXT_KEYWORDS = [
+  // AgriToday
+  ['agritoday','AgriToday'],['agri today','AgriToday'],['agriculture','AgriToday'],
+  ['farming','AgriToday'],['livestock','AgriToday'],['crop','AgriToday'],
+  ['harvest','AgriToday'],['irrigation','AgriToday'],['green scheme','AgriToday'],
+  ['farmer','AgriToday'],['cattle','AgriToday'],['maize','AgriToday'],
+  ['fertilizer','AgriToday'],['food security','AgriToday'],['rural','AgriToday'],
+  // Vibez!
+  ['vibez','Vibez!'],['entertainment','Vibez!'],['lifestyle','Vibez!'],
+  ['celebrity','Vibez!'],['fashion','Vibez!'],['music','Vibez!'],
+  ['concert','Vibez!'],['festival','Vibez!'],['album','Vibez!'],
+  ['drama','Vibez!'],['comedy','Vibez!'],['theatre','Vibez!'],
+  ['movie','Vibez!'],['film','Vibez!'],['nightlife','Vibez!'],
+  ['dance','Vibez!'],['culture','Vibez!'],
+  // Business
+  ['business','Business'],['tenders','Business'],['tender','Business'],
+  ['accountant','Business'],['accounting','Business'],['audit','Business'],
+  ['finance','Business'],['financial','Business'],['economy','Business'],
+  ['economic','Business'],['market','Business'],['investment','Business'],
+  ['corporate','Business'],['stock exchange','Business'],['nse','Business'],
+  ['taxation','Business'],['tax','Business'],['revenue','Business'],
+  ['budget','Business'],['banking','Business'],['insurance','Business'],
+  ['inflation','Business'],['gdp','Business'],['trade','Business'],
+  ['procurement','Business'],['quotation','Business'],['tender notice','Business'],
+  // Sport
+  ['sport','Sport'],['football','Sport'],['soccer','Sport'],['rugby','Sport'],
+  ['cricket','Sport'],['athletics','Sport'],['marathon','Sport'],['boxing','Sport'],
+  ['swimming','Sport'],['tennis','Sport'],['golf','Sport'],['basketball','Sport'],
+  ['volleyball','Sport'],['cycling','Sport'],['championship','Sport'],
+  ['league','Sport'],['tournament','Sport'],['fixture','Sport'],
+  ['stadium','Sport'],['goal','Sport'],['kick-off','Sport'],
+  ['handball','Sport'],['netball','Sport'],
+  // News (catch-all — must be last)
+  ['news','News'],['namibia','News'],['government','News'],['parliament','News'],
+  ['minister','News'],['president','News'],['police','News'],['court','News'],
+  ['crime','News'],['election','News'],['municipality','News'],['health','News'],
+  ['education','News'],['school','News'],['hospital','News'],['policy','News'],
+  ['legislation','News'],['region','News'],
+];
+
+/** Classify section from raw PDF text (lowercase). Returns null if no match. */
+function classifySectionFromText(text) {
+  const lower = text.toLowerCase();
+  for (const [keyword, section] of SECTION_TEXT_KEYWORDS) {
+    if (lower.includes(keyword)) return section;
+  }
+  return null;
+}
+
+/** Extract text from first page of a PDF File using pdfjs-dist. */
+async function extractTextFromPdf(file) {
+  try {
+    const pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.mjs`;
+    const bytes = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    return content.items.map(i => i.str).join(' ');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Extract page number from a filename like NE_20260302_05.pdf → 5
@@ -91,16 +160,25 @@ export default function Upload() {
   }, [fetchPages]);
 
   const processOneFile = useCallback(
-    async (file) => {
+    async (file, existingPages) => {
+      // ── Deduplication: skip if this filename already exists today ────────
+      const alreadyExists = existingPages.some(
+        (p) => p.filename.toLowerCase() === file.name.toLowerCase()
+      );
+      if (alreadyExists) {
+        showToast(`${file.name} already uploaded — skipped (duplicate)`, 'error');
+        return;
+      }
+
       setUploadingFiles((prev) => ({ ...prev, [file.name]: 'uploading' }));
       try {
         const storagePath = `${todayStr}/${file.name}`;
         await uploadToStorage('Upload', storagePath, file);
 
-        // Extract page number from filename if possible (e.g. NE_20260302_05.pdf → 5)
         const filenamePageNum = extractPageNumberFromFilename(file.name);
 
-        await insertPage({
+        // Insert the page record immediately so it shows up in the list
+        const newPage = await insertPage({
           edition_date: todayStr,
           filename: file.name,
           storage_path: storagePath,
@@ -109,12 +187,29 @@ export default function Upload() {
           uploaded_by: user?.email || 'unknown',
         });
 
+        // ── Auto-classify: extract text from the PDF and detect section ───
+        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
+        const pdfText = await extractTextFromPdf(file);
+        const detectedSection = classifySectionFromText(pdfText);
+
+        if (detectedSection && newPage?.id) {
+          await updatePage(newPage.id, {
+            section: detectedSection,
+            status: 'analysed',
+          }).catch(() => {});
+        }
+
         setUploadingFiles((prev) => {
           const next = { ...prev };
           delete next[file.name];
           return next;
         });
-        showToast(`${file.name} uploaded${filenamePageNum != null ? ` (page ${filenamePageNum})` : ''}`, 'success');
+
+        const sectionLabel = detectedSection ? ` → ${detectedSection}` : '';
+        showToast(
+          `${file.name} uploaded${filenamePageNum != null ? ` (p${filenamePageNum})` : ''}${sectionLabel}`,
+          'success'
+        );
       } catch (err) {
         setUploadingFiles((prev) => {
           const next = { ...prev };
@@ -139,11 +234,14 @@ export default function Upload() {
 
       if (pdfFiles.length === 0) return;
 
-      // Process ALL files in parallel for maximum speed
-      await Promise.all(pdfFiles.map((file) => processOneFile(file)));
+      // Snapshot current pages for dedup check (shared across parallel uploads)
+      const currentPages = await getPages(todayStr).catch(() => []);
+
+      // Process all files in parallel — each gets the same snapshot for dedup
+      await Promise.all(pdfFiles.map((file) => processOneFile(file, currentPages)));
       fetchPages();
     },
-    [fetchPages, processOneFile]
+    [fetchPages, processOneFile, todayStr]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -274,17 +372,46 @@ export default function Upload() {
             <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{pages.length} pages</span>
           </div>
           <div className="file-list">
-            <div className="file-list-header" style={{ gridTemplateColumns: '2fr 0.7fr 1fr 0.5fr' }}>
+            <div className="file-list-header" style={{ gridTemplateColumns: '2fr 0.6fr 1fr 1fr 0.5fr' }}>
               <span>Filename</span>
               <span>Page #</span>
+              <span>Section</span>
               <span>Uploaded</span>
               <span></span>
             </div>
-            {pages.map((page, idx) => (
-              <div key={page.id || idx} className="file-list-row" style={{ gridTemplateColumns: '2fr 0.7fr 1fr 0.5fr' }}>
+            {[...pages]
+              .sort((a, b) => {
+                const na = extractPageNumberFromFilename(a.filename) ?? a.page_number ?? 9999;
+                const nb = extractPageNumberFromFilename(b.filename) ?? b.page_number ?? 9999;
+                return na - nb;
+              })
+              .map((page, idx) => (
+              <div key={page.id || idx} className="file-list-row" style={{ gridTemplateColumns: '2fr 0.6fr 1fr 1fr 0.5fr' }}>
                 <span className="file-filename mono">{page.filename}</span>
                 <span className="file-page-num">
                   {page.page_number != null ? `p${page.page_number}` : '—'}
+                </span>
+                <span style={{
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  background: page.section === 'Sport' ? '#dbeafe'
+                    : page.section === 'Business' ? '#dcfce7'
+                    : page.section === 'Vibez!' ? '#fce7f3'
+                    : page.section === 'AgriToday' ? '#fef9c3'
+                    : page.section === 'News' ? '#ede9fe'
+                    : '#f3f4f6',
+                  color: page.section === 'Sport' ? '#1d4ed8'
+                    : page.section === 'Business' ? '#166534'
+                    : page.section === 'Vibez!' ? '#9d174d'
+                    : page.section === 'AgriToday' ? '#854d0e'
+                    : page.section === 'News' ? '#5b21b6'
+                    : '#6b7280',
+                  alignSelf: 'center',
+                  width: 'fit-content',
+                }}>
+                  {page.section || 'Unclassified'}
                 </span>
                 <span className="file-time mono">
                   {page.uploaded_at ? new Date(page.uploaded_at).toLocaleTimeString() : '—'}

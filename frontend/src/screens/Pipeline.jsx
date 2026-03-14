@@ -98,9 +98,76 @@ function extractSectionFromFilename(filename) {
 }
 
 /**
- * Extract section keyword from PDF embedded text using pdfjs-dist.
- * Digital (non-scanned) PDFs have the section header as real text — instant, no API.
- * Returns null for image-only/scanned PDFs.
+ * Ordered keyword → section mapping.
+ * Most-specific terms come first to prevent false positives.
+ * Mirrors the backend's _SECTION_TEXT_KEYWORDS list.
+ */
+const SECTION_TEXT_KEYWORDS = [
+  // AgriToday
+  ['agritoday',       'AgriToday'], ['agri today',      'AgriToday'],
+  ['agriculture',     'AgriToday'], ['agricultural',    'AgriToday'],
+  ['farming',         'AgriToday'], ['livestock',       'AgriToday'],
+  ['crop',            'AgriToday'], ['harvest',         'AgriToday'],
+  ['irrigation',      'AgriToday'], ['green scheme',    'AgriToday'],
+  ['farmer',          'AgriToday'], ['cattle',          'AgriToday'],
+  ['maize',           'AgriToday'], ['soil',            'AgriToday'],
+  ['fertilizer',      'AgriToday'], ['planting season', 'AgriToday'],
+  ['food security',   'AgriToday'], ['rural',           'AgriToday'],
+  // Vibez!
+  ['vibez',           'Vibez!'],   ['entertainment',   'Vibez!'],
+  ['lifestyle',       'Vibez!'],   ['celebrity',       'Vibez!'],
+  ['fashion',         'Vibez!'],   ['music',           'Vibez!'],
+  ['concert',         'Vibez!'],   ['festival',        'Vibez!'],
+  ['album',           'Vibez!'],   ['artist',          'Vibez!'],
+  ['drama',           'Vibez!'],   ['comedy',          'Vibez!'],
+  ['theatre',         'Vibez!'],   ['movie',           'Vibez!'],
+  ['film',            'Vibez!'],   ['nightlife',       'Vibez!'],
+  ['dance',           'Vibez!'],   ['culture',         'Vibez!'],
+  // Business
+  ['business',        'Business'], ['tenders',         'Business'],
+  ['tender',          'Business'], ['accountant',      'Business'],
+  ['accounting',      'Business'], ['audit',           'Business'],
+  ['finance',         'Business'], ['financial',       'Business'],
+  ['economy',         'Business'], ['economic',        'Business'],
+  ['market',          'Business'], ['investment',      'Business'],
+  ['commerce',        'Business'], ['corporate',       'Business'],
+  ['stock exchange',  'Business'], ['nse',             'Business'],
+  ['taxation',        'Business'], ['tax',             'Business'],
+  ['revenue',         'Business'], ['budget',          'Business'],
+  ['profit',          'Business'], ['banking',         'Business'],
+  ['insurance',       'Business'], ['inflation',       'Business'],
+  ['gdp',             'Business'], ['trade',           'Business'],
+  ['procurement',     'Business'], ['quotation',       'Business'],
+  ['annual report',   'Business'], ['tender notice',   'Business'],
+  // Sport
+  ['sport',           'Sport'],    ['football',        'Sport'],
+  ['soccer',          'Sport'],    ['rugby',           'Sport'],
+  ['cricket',         'Sport'],    ['athletics',       'Sport'],
+  ['marathon',        'Sport'],    ['boxing',          'Sport'],
+  ['swimming',        'Sport'],    ['tennis',          'Sport'],
+  ['golf',            'Sport'],    ['basketball',      'Sport'],
+  ['volleyball',      'Sport'],    ['cycling',         'Sport'],
+  ['championship',    'Sport'],    ['league',          'Sport'],
+  ['tournament',      'Sport'],    ['fixture',         'Sport'],
+  ['stadium',         'Sport'],    ['coach',           'Sport'],
+  ['goal',            'Sport'],    ['kick-off',        'Sport'],
+  ['handball',        'Sport'],    ['netball',         'Sport'],
+  // News (catch-all — must be last)
+  ['news',            'News'],     ['namibia',         'News'],
+  ['government',      'News'],     ['parliament',      'News'],
+  ['minister',        'News'],     ['president',       'News'],
+  ['police',          'News'],     ['court',           'News'],
+  ['crime',           'News'],     ['election',        'News'],
+  ['municipality',    'News'],     ['health',          'News'],
+  ['education',       'News'],     ['school',          'News'],
+  ['hospital',        'News'],     ['policy',          'News'],
+  ['legislation',     'News'],     ['region',          'News'],
+];
+
+/**
+ * Extract section from PDF embedded text using pdfjs-dist.
+ * Digital PDFs have text layers — instant classification, zero API calls.
+ * Returns null for image/scanned PDFs (fall back to backend AI vision).
  */
 async function extractSectionFromPdfBlob(blob, pdfjsLib) {
   try {
@@ -109,13 +176,11 @@ async function extractSectionFromPdfBlob(blob, pdfjsLib) {
     const page = await pdf.getPage(1);
     const content = await page.getTextContent();
     const text = content.items.map(i => i.str).join(' ').toLowerCase();
-    // Check most-specific keywords first to avoid false matches
-    const ordered = ['agritoday', 'vibez', 'business', 'sport', 'news'];
-    for (const keyword of ordered) {
-      if (text.includes(keyword)) return KNOWN_SECTIONS_MAP[keyword];
+    for (const [keyword, section] of SECTION_TEXT_KEYWORDS) {
+      if (text.includes(keyword)) return section;
     }
   } catch {
-    // Scanned/image PDF — will fall back to backend AI vision
+    // Scanned/image PDF — falls back to backend AI vision
   }
   return null;
 }
@@ -244,19 +309,27 @@ export default function Pipeline() {
         addLog(`Duplicates deleted: ${dedupResult.removed.length} removed (${dedupResult.total_before} → ${dedupResult.total_after})`);
       }
 
-      const sortedPages = dedupResult.unique_pages || [];
+      const rawPages = dedupResult.unique_pages || [];
 
-      if (sortedPages.length === 0) {
+      if (rawPages.length === 0) {
         addLog('[ERROR] No pages found. Upload PDF pages first.');
         updateStep(0, 'error');
         setIsRunning(false);
         return;
       }
 
-      addLog(`${sortedPages.length} unique pages — order:`);
+      // Sort pages by page number — filename number first, then DB field, unknown go last
+      const sortedPages = [...rawPages].sort((a, b) => {
+        const na = extractPageNumberFromFilename(a.filename) ?? a.page_number ?? 9999;
+        const nb = extractPageNumberFromFilename(b.filename) ?? b.page_number ?? 9999;
+        return na - nb;
+      });
+
+      addLog(`${sortedPages.length} unique pages — sorted order:`);
       sortedPages.forEach(p => {
         const num = extractPageNumberFromFilename(p.filename) ?? p.page_number;
-        addLog(`  p${num ?? '?'} → ${p.filename}`);
+        const sec = p.section ? ` [${p.section}]` : '';
+        addLog(`  p${num ?? '?'}${sec} → ${p.filename}`);
       });
 
       updateStep(0, 'done', Date.now() - start);
