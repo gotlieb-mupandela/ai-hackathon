@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import './Navbar.css';
 
 export default function Navbar() {
-  const { user, signOut, isAdmin } = useAuth();
+  const { user, signOut } = useAuth();
 
   return (
     <header className="navbar">
