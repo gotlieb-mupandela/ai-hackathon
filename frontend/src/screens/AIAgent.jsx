@@ -1,7 +1,3 @@
-/**
- * AI Agent Screen — Autonomous agent trained on company data.
- * Analyzes patterns, makes recommendations, answers questions.
- */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { queryAgent } from '../api';
 import './AIAgent.css';
@@ -18,16 +14,33 @@ const SUGGESTED_QUESTIONS = [
   'What content performs best with subscribers?',
   'What should we prioritize for tomorrow\'s edition?',
   'Any issues with today\'s uploads I should know about?',
-  'What improvements would boost our circulation?',
-  'What\'s the best time to publish for maximum engagement?',
 ];
+
+// --- Icons ---
+const SendIcon = () => (
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-7 7m7-7l7 7" />
+  </svg>
+);
+
+const BotIcon = () => (
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1 1 .3 2.7-1.1 2.7H4.3c-1.4 0-2.1-1.7-1.1-2.7L4.6 15.3" />
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+  </svg>
+);
 
 export default function AIAgent() {
   const [messages, setMessages] = useState([
     {
       id: 1,
       type: 'bot',
-      text: 'I\'m your AI Agent, trained on NewEra\'s company data. I can help you make informed decisions about your editorial operations. Ask me anything about your content, team performance, subscriber data, or upload patterns.',
+      text: 'Hello! I\'m your AI Agent, trained on NewEra\'s data. I can help you analyze content, team performance, subscriber trends, and upload patterns. How can I help you today?',
       timestamp: new Date(),
     },
   ]);
@@ -35,6 +48,7 @@ export default function AIAgent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
   const todayStr = getTodayStr();
 
   const scrollToBottom = () => {
@@ -43,14 +57,22 @@ export default function AIAgent() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, loading]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 150)}px`;
+    }
+  }, [input]);
 
   const handleSendMessage = useCallback(async (text) => {
     if (!text.trim()) return;
 
     setError('');
     const userMessage = {
-      id: messages.length + 1,
+      id: Date.now(),
       type: 'user',
       text: text.trim(),
       timestamp: new Date(),
@@ -60,6 +82,10 @@ export default function AIAgent() {
     setInput('');
     setLoading(true);
 
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
     try {
       const response = await queryAgent({
         query: text.trim(),
@@ -68,7 +94,7 @@ export default function AIAgent() {
       });
 
       const botMessage = {
-        id: messages.length + 2,
+        id: Date.now() + 1,
         type: 'bot',
         text: response.answer || 'I\'m not sure how to answer that. Can you ask differently?',
         reasoning: response.reasoning,
@@ -83,7 +109,7 @@ export default function AIAgent() {
     } finally {
       setLoading(false);
     }
-  }, [messages.length, todayStr]);
+  }, [todayStr]);
 
   const handleSuggestedQuestion = (question) => {
     handleSendMessage(question);
@@ -91,7 +117,6 @@ export default function AIAgent() {
 
   return (
     <div className="ai-agent-page">
-      {/* Header */}
       <div className="page-header">
         <h1 className="page-title">AI Agent</h1>
         <p className="page-subtitle">Autonomous agent trained on NewEra data. Ask questions, get data-driven insights.</p>
@@ -101,52 +126,47 @@ export default function AIAgent() {
         {/* Chat Area */}
         <div className="agent-chat-container">
           <div className="agent-messages">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`message message--${msg.type}`}>
-                <div className="message-avatar">
-                  {msg.type === 'bot' ? 'AI' : 'You'}
-                </div>
-                <div className="message-content">
+            {messages.map((msg, index) => (
+              <div key={msg.id} className={`message-wrapper ${msg.type === 'user' ? 'message-wrapper--user' : 'message-wrapper--bot'}`}>
+                {msg.type === 'bot' && (
+                  <div className="message-avatar bot-avatar">
+                    <BotIcon />
+                  </div>
+                )}
+                
+                <div className={`message-bubble message-bubble--${msg.type}`}>
                   <p className="message-text">{msg.text}</p>
+                  
                   {msg.reasoning && (
                     <details className="message-reasoning">
-                      <summary>Show reasoning</summary>
+                      <summary>View agent reasoning</summary>
                       <p>{msg.reasoning}</p>
                     </details>
                   )}
+                  
                   {msg.data && (
                     <div className="message-data">
                       <pre>{JSON.stringify(msg.data, null, 2)}</pre>
                     </div>
                   )}
+                  
                   <span className="message-time">
                     {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
+
+                {msg.type === 'user' && (
+                  <div className="message-avatar user-avatar">
+                    <UserIcon />
+                  </div>
+                )}
               </div>
             ))}
-            {loading && (
-              <div className="message message--bot message--loading">
-                <div className="message-avatar">AI</div>
-                <div className="message-content">
-                  <div className="typing-indicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                  </div>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
 
-          {/* Input Area */}
-          <div className="agent-input-section">
-            {error && <div className="agent-error">{error}</div>}
-
-            {messages.length <= 1 && !loading && (
-              <div className="suggested-questions">
-                <p className="suggested-label">Try asking:</p>
+            {/* Empty State / Suggested Questions */}
+            {messages.length === 1 && !loading && (
+              <div className="suggested-container">
+                <p className="suggested-label">Suggestions</p>
                 <div className="suggested-grid">
                   {SUGGESTED_QUESTIONS.map((q, idx) => (
                     <button
@@ -161,10 +181,32 @@ export default function AIAgent() {
               </div>
             )}
 
-            <div className="agent-input-wrap">
+            {loading && (
+              <div className="message-wrapper message-wrapper--bot">
+                <div className="message-avatar bot-avatar">
+                  <BotIcon />
+                </div>
+                <div className="message-bubble message-bubble--bot message-bubble--loading">
+                  <div className="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} className="messages-bottom-padding" />
+          </div>
+
+          {/* Input Area */}
+          <div className="agent-input-section">
+            {error && <div className="agent-error">{error}</div>}
+
+            <div className={`agent-input-wrap ${input.trim() ? 'has-text' : ''}`}>
               <textarea
+                ref={textareaRef}
                 className="agent-input"
-                placeholder="Ask me about your content, team, subscribers, performance... I'm trained on your data."
+                placeholder="Message AI Agent..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -174,17 +216,18 @@ export default function AIAgent() {
                   }
                 }}
                 disabled={loading}
-                rows={3}
+                rows={1}
               />
               <button
                 className="agent-send-btn"
                 onClick={() => handleSendMessage(input)}
                 disabled={loading || !input.trim()}
+                title="Send message"
               >
-                {loading ? 'Thinking...' : 'Send'}
+                <SendIcon />
               </button>
             </div>
-            <p className="input-hint">Ask specific questions for better insights. (Shift+Enter for newline)</p>
+            <p className="input-hint">AI can make mistakes. Consider verifying important information.</p>
           </div>
         </div>
 
