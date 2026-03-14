@@ -4,35 +4,51 @@ import {
   addSubscriber,
   removeSubscriber,
   toggleAutoSend,
+  updateSubscriberPreferences,
 } from '../api';
 import './SubscriberPanel.css';
 
+const SECTIONS = [
+  { key: 'full_paper', label: 'Full Paper' },
+  { key: 'news',       label: 'News' },
+  { key: 'sport',      label: 'Sport' },
+  { key: 'business',   label: 'Business' },
+  { key: 'vibez',      label: 'Vibez!' },
+  { key: 'agritoday',  label: 'AgriToday' },
+  { key: 'solzi',      label: 'Solzi' },
+];
+
 export default function SubscriberPanel() {
-  const [numbers, setNumbers] = useState([]);
-  const [autoSend, setAutoSend] = useState(true);
-  const [newPhone, setNewPhone] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [numbers, setNumbers]         = useState([]);
+  const [preferences, setPreferences] = useState({});
+  const [autoSend, setAutoSend]       = useState(true);
+  const [newPhone, setNewPhone]       = useState('');
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState('');
+  const [adding, setAdding]           = useState(false);
+  // Track which subscriber's preferences are being saved
+  const [savingPref, setSavingPref]   = useState({});
 
   const getErrorMessage = (err, fallback) => {
     const status = err?.response?.status;
-    const data = err?.response?.data;
+    const data   = err?.response?.data;
     const detail = data?.detail;
-
-    if (status === 404) {
-      return 'Subscriber API not found (404). Start the Python backend with: cd backend && uvicorn main:app --reload';
-    }
+    if (status === 404) return 'Subscriber API not found — start the Python backend on port 8000.';
     if (detail) return Array.isArray(detail) ? detail.map((d) => d.msg).join(', ') : String(detail);
     if (typeof data === 'string') return data;
     return err?.message || fallback;
   };
 
+  const applyData = (data) => {
+    setNumbers(data.numbers || []);
+    setAutoSend(data.auto_send ?? true);
+    setPreferences(data.preferences || {});
+  };
+
   const fetchSubscribers = useCallback(async () => {
     try {
       const data = await getSubscribers();
-      setNumbers(data.numbers || []);
-      setAutoSend(data.auto_send ?? true);
+      applyData(data);
       setError('');
     } catch (err) {
       setError(
@@ -45,24 +61,20 @@ export default function SubscriberPanel() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchSubscribers();
-  }, [fetchSubscribers]);
+  useEffect(() => { fetchSubscribers(); }, [fetchSubscribers]);
 
   const handleAdd = async () => {
     const phone = newPhone.trim();
     if (!phone) return;
-
     if (!phone.startsWith('+')) {
       setError('Phone number must start with country code (e.g. +264...)');
       return;
     }
-
     setAdding(true);
     setError('');
     try {
       const data = await addSubscriber(phone);
-      setNumbers(data.numbers || []);
+      applyData(data);
       setNewPhone('');
     } catch (err) {
       setError(
@@ -78,7 +90,7 @@ export default function SubscriberPanel() {
   const handleRemove = async (phone) => {
     try {
       const data = await removeSubscriber(phone);
-      setNumbers(data.numbers || []);
+      applyData(data);
     } catch (err) {
       setError(getErrorMessage(err, 'Failed to remove subscriber'));
     }
@@ -93,8 +105,26 @@ export default function SubscriberPanel() {
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') handleAdd();
+  const handleToggleSection = async (phone, sectionKey) => {
+    const current = preferences[phone] || ['full_paper'];
+    const updated = current.includes(sectionKey)
+      ? current.filter((s) => s !== sectionKey)
+      : [...current, sectionKey];
+
+    // Optimistically update UI
+    setPreferences((prev) => ({ ...prev, [phone]: updated }));
+    setSavingPref((prev) => ({ ...prev, [phone]: true }));
+
+    try {
+      const data = await updateSubscriberPreferences(phone, updated);
+      applyData(data);
+    } catch (err) {
+      // Roll back on failure
+      setPreferences((prev) => ({ ...prev, [phone]: current }));
+      setError(getErrorMessage(err, 'Failed to update preferences'));
+    } finally {
+      setSavingPref((prev) => ({ ...prev, [phone]: false }));
+    }
   };
 
   if (loading) {
@@ -114,6 +144,7 @@ export default function SubscriberPanel() {
         </div>
         <p className="subscriber-desc">
           Published editions are automatically sent to these numbers via WhatsApp.
+          Choose which sections each subscriber receives.
         </p>
       </div>
 
@@ -140,7 +171,7 @@ export default function SubscriberPanel() {
           placeholder="+264 81 123 4567"
           value={newPhone}
           onChange={(e) => setNewPhone(e.target.value)}
-          onKeyDown={handleKeyDown}
+          onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
           disabled={adding}
         />
         <button
@@ -159,18 +190,45 @@ export default function SubscriberPanel() {
             No subscribers yet. Add phone numbers above.
           </div>
         ) : (
-          numbers.map((phone) => (
-            <div key={phone} className="subscriber-item">
-              <span className="subscriber-phone">{phone}</span>
-              <button
-                className="subscriber-remove-btn"
-                onClick={() => handleRemove(phone)}
-                title={`Remove ${phone}`}
-              >
-                Remove
-              </button>
-            </div>
-          ))
+          numbers.map((phone) => {
+            const prefs = preferences[phone] || ['full_paper'];
+            const isSaving = savingPref[phone];
+            return (
+              <div key={phone} className="subscriber-item">
+                <div className="subscriber-item-top">
+                  <span className="subscriber-phone">{phone}</span>
+                  <button
+                    className="subscriber-remove-btn"
+                    onClick={() => handleRemove(phone)}
+                    title={`Remove ${phone}`}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="subscriber-sections">
+                  <span className="subscriber-sections-label">
+                    {isSaving ? 'Saving...' : 'Receives:'}
+                  </span>
+                  <div className="subscriber-section-chips">
+                    {SECTIONS.map(({ key, label }) => {
+                      const active = prefs.includes(key);
+                      return (
+                        <button
+                          key={key}
+                          className={`section-chip ${active ? 'section-chip--active' : ''}`}
+                          onClick={() => handleToggleSection(phone, key)}
+                          disabled={isSaving}
+                          title={active ? `Remove ${label}` : `Add ${label}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
     </div>

@@ -57,6 +57,11 @@ export const removeSubscriber = async (phone) => {
   return res.data;
 };
 
+export const updateSubscriberPreferences = async (phone, sections) => {
+  const res = await analyzer.post('/subscribers/preferences', { phone, sections });
+  return res.data;
+};
+
 export const toggleAutoSend = async () => {
   const res = await analyzer.post('/subscribers/auto-send');
   return res.data;

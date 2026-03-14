@@ -34,6 +34,7 @@ from whatsapp import (
     remove_number,
     save_subscribers_data,
     send_pdf_to_all,
+    update_preferences,
 )
 
 # PDF-to-image conversion
@@ -131,13 +132,18 @@ class PhoneBody(BaseModel):
     phone: str
 
 
+class PreferencesBody(BaseModel):
+    phone: str
+    sections: list[str]
+
+
 class NotifyBody(BaseModel):
     edition_date: str
 
 
 @app.get("/subscribers")
 async def list_subscribers():
-    """Return the full subscriber data (numbers list + auto_send flag)."""
+    """Return full subscriber data: numbers, auto_send, preferences."""
     try:
         return load_subscribers()
     except RuntimeError as exc:
@@ -146,12 +152,12 @@ async def list_subscribers():
 
 @app.post("/subscribers/add")
 async def add_subscriber(body: PhoneBody):
-    """Add a phone number to the subscriber list."""
+    """Add a phone number with default preference (full_paper)."""
     if not body.phone.strip():
         raise HTTPException(status_code=400, detail="Phone number is required")
     try:
-        numbers = add_number(body.phone)
-        return {"numbers": numbers}
+        data = add_number(body.phone)
+        return data
     except RuntimeError as exc:
         logger.error("add_subscriber failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -159,12 +165,25 @@ async def add_subscriber(body: PhoneBody):
 
 @app.post("/subscribers/remove")
 async def remove_subscriber(body: PhoneBody):
-    """Remove a phone number from the subscriber list."""
+    """Remove a phone number and its preferences."""
     try:
-        numbers = remove_number(body.phone)
-        return {"numbers": numbers}
+        data = remove_number(body.phone)
+        return data
     except RuntimeError as exc:
         logger.error("remove_subscriber failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/subscribers/preferences")
+async def set_subscriber_preferences(body: PreferencesBody):
+    """Update which sections a subscriber receives."""
+    try:
+        data = update_preferences(body.phone, body.sections)
+        return data
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        logger.error("set_preferences failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

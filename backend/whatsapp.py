@@ -3,6 +3,10 @@ WhatsApp auto-send via desktop automation.
 Downloads the published PDF from Supabase Storage, saves it to ~/Downloads,
 then uses pywhatkit + pyautogui to send it to each subscriber via WhatsApp Web.
 
+Each subscriber can have section preferences — they only receive the sections
+they subscribed to (full_paper, news, sport, business, vibez, agritoday, solzi).
+Default when no preference is set: full_paper only.
+
 Requirements:
   - Backend must run on the same machine where WhatsApp Web is logged in.
   - User should not touch mouse/keyboard while sending is in progress.
@@ -23,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 SUBSCRIBERS_FILE = Path(__file__).parent / "subscribers.json"
 
+# All available sections subscribers can opt into
+ALL_SECTIONS = ["full_paper", "news", "sport", "business", "vibez", "agritoday", "solzi"]
+
 # Disable pyautogui fail-safe pause (we handle our own timing)
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.5
@@ -32,7 +39,12 @@ pyautogui.PAUSE = 0.5
 
 def load_subscribers() -> dict:
     """Load subscribers data from JSON file. Returns safe default on any error."""
-    default = {"numbers": [], "auto_send": True}
+    default = {
+        "numbers": [],
+        "auto_send": True,
+        # Maps phone → list of section keys they want to receive
+        "preferences": {}
+    }
 
     if not SUBSCRIBERS_FILE.exists():
         try:
@@ -44,11 +56,12 @@ def load_subscribers() -> dict:
     try:
         with open(SUBSCRIBERS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Ensure required keys exist
         if "numbers" not in data:
             data["numbers"] = []
         if "auto_send" not in data:
             data["auto_send"] = True
+        if "preferences" not in data:
+            data["preferences"] = {}
         return data
     except (json.JSONDecodeError, ValueError) as exc:
         logger.error("subscribers.json is corrupt (%s) — resetting to defaults", exc)
@@ -61,9 +74,7 @@ def load_subscribers() -> dict:
 def save_subscribers_data(data: dict) -> None:
     """Write full subscriber data to JSON file."""
     try:
-        # Ensure the parent directory exists
         SUBSCRIBERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        # Write to a temp file first to avoid data loss on crash
         tmp_path = SUBSCRIBERS_FILE.with_suffix(".json.tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -77,24 +88,43 @@ def get_numbers() -> list[str]:
     return load_subscribers().get("numbers", [])
 
 
-def add_number(number: str) -> list[str]:
-    """Add a number and return updated list."""
+def add_number(number: str) -> dict:
+    """Add a number (default: full_paper only) and return updated subscriber data."""
     data = load_subscribers()
     cleaned = number.strip()
     if cleaned and cleaned not in data["numbers"]:
         data["numbers"].append(cleaned)
+        # Default preference: full newspaper
+        if cleaned not in data["preferences"]:
+            data["preferences"][cleaned] = ["full_paper"]
         save_subscribers_data(data)
-    return data["numbers"]
+    return data
 
 
-def remove_number(number: str) -> list[str]:
-    """Remove a number and return updated list."""
+def remove_number(number: str) -> dict:
+    """Remove a number and its preferences, return updated data."""
     data = load_subscribers()
     cleaned = number.strip()
     if cleaned in data["numbers"]:
         data["numbers"].remove(cleaned)
+        data["preferences"].pop(cleaned, None)
         save_subscribers_data(data)
-    return data["numbers"]
+    return data
+
+
+def update_preferences(number: str, sections: list[str]) -> dict:
+    """Set which sections a subscriber receives. Returns updated data."""
+    data = load_subscribers()
+    cleaned = number.strip()
+    if cleaned not in data["numbers"]:
+        raise ValueError(f"Number {cleaned} is not a subscriber")
+    # Validate section keys
+    valid = [s for s in sections if s in ALL_SECTIONS]
+    if not valid:
+        valid = ["full_paper"]
+    data["preferences"][cleaned] = valid
+    save_subscribers_data(data)
+    return data
 
 
 # ─── PDF download from Supabase ──────────────────────────────
@@ -121,7 +151,6 @@ def download_pdf_from_supabase(edition_date: str) -> str:
     if not response:
         raise RuntimeError(f"Empty response downloading {storage_path}")
 
-    # Save to a temp file
     import tempfile
     tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     tmp.write(response)
@@ -144,48 +173,72 @@ def save_pdf_to_downloads(local_pdf_path: str, edition_date: str) -> str:
 
 # ─── WhatsApp sending via desktop automation ─────────────────
 
-def _build_supabase_pdf_url(edition_date: str) -> str:
-    """Construct the public Supabase Storage URL for the edition's full_paper.pdf."""
+# Maps section key → storage filename
+SECTION_FILE_MAP = {
+    "full_paper": "full_paper.pdf",
+    "news":       "news.pdf",
+    "sport":      "sport.pdf",
+    "business":   "business.pdf",
+    "vibez":      "vibez.pdf",
+    "agritoday":  "agritoday.pdf",
+    "solzi":      "solzi.pdf",
+}
+
+SECTION_LABEL_MAP = {
+    "full_paper": "Full Newspaper",
+    "news":       "NewEra News",
+    "sport":      "NewEra Sport",
+    "business":   "NewEra Business",
+    "vibez":      "NewEra Vibez!",
+    "agritoday":  "NewEra AgriToday",
+    "solzi":      "NewEra Solzi",
+}
+
+
+def _build_section_url(edition_date: str, section_key: str) -> str:
+    """Construct the public Supabase Storage URL for a specific section PDF."""
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    # Public URL format: {SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}
-    return f"{supabase_url}/storage/v1/object/public/outputs/{edition_date}/full_paper.pdf"
+    filename = SECTION_FILE_MAP.get(section_key, "full_paper.pdf")
+    return f"{supabase_url}/storage/v1/object/public/outputs/{edition_date}/{filename}"
 
 
-def send_whatsapp_pdf(phone: str, pdf_path: str, edition_date: str) -> None:
+def send_whatsapp_pdf(phone: str, pdf_path: str, edition_date: str, sections: list[str] = None) -> None:
     """
-    Open WhatsApp Web and send the edition PDF download link to the phone number.
-    The Supabase public URL is sent as the message — no file attachment automation needed.
-    The subscriber taps the link to download/view the PDF instantly.
+    Send the subscriber their chosen section PDFs via WhatsApp Web link.
+    If sections is None or empty, defaults to full_paper.
     """
-    pdf_url = _build_supabase_pdf_url(edition_date)
+    if not sections:
+        sections = ["full_paper"]
 
-    message = (
-        f"New Era Edition — {edition_date} is ready!\n\n"
-        f"Download your copy here:\n{pdf_url}"
-    )
-    logger.info("Sending WhatsApp PDF link to %s ...", phone)
+    # Build one URL per subscribed section
+    lines = [f"New Era Edition — {edition_date} is ready!\n"]
+    for section_key in sections:
+        label = SECTION_LABEL_MAP.get(section_key, section_key)
+        url = _build_section_url(edition_date, section_key)
+        lines.append(f"{label}:\n{url}")
+
+    message = "\n\n".join(lines)
+    logger.info("Sending WhatsApp message to %s for sections: %s", phone, sections)
 
     pywhatkit.sendwhatmsg_instantly(
         phone_no=phone,
         message=message,
         wait_time=15,
-        tab_close=True,   # Close the tab after sending so next number opens cleanly
+        tab_close=True,
     )
-
-    # Wait for message to fully send before moving to next recipient
     time.sleep(8)
-    logger.info("PDF link sent to %s", phone)
+    logger.info("Message sent to %s", phone)
 
 
 def send_pdf_to_all(edition_date: str) -> dict:
     """
-    Full flow: download PDF from Supabase, save to Downloads,
-    then send to every subscriber via WhatsApp Web.
+    Send each subscriber the section PDFs they subscribed to.
     Returns a summary dict.
     """
     data = load_subscribers()
     numbers = data.get("numbers", [])
     auto_send = data.get("auto_send", True)
+    preferences = data.get("preferences", {})
 
     if not auto_send:
         logger.info("Auto-send is disabled, skipping WhatsApp notifications")
@@ -195,18 +248,16 @@ def send_pdf_to_all(edition_date: str) -> dict:
         logger.info("No subscribers to notify")
         return {"sent": 0, "failed": 0, "skipped": False}
 
-    logger.info("Sending PDF link to %d subscribers...", len(numbers))
-
+    logger.info("Sending to %d subscribers...", len(numbers))
     sent = 0
     failed = 0
 
     for phone in numbers:
         try:
-            # Pass empty string for pdf_path — link-based sending doesn't need local file
-            send_whatsapp_pdf(phone, "", edition_date)
+            sections = preferences.get(phone, ["full_paper"])
+            send_whatsapp_pdf(phone, "", edition_date, sections)
             sent += 1
-            logger.info("Sent link to %s (%d/%d)", phone, sent, len(numbers))
-            # Brief pause between sends so browser can close cleanly
+            logger.info("Sent to %s (%d/%d) — sections: %s", phone, sent, len(numbers), sections)
             time.sleep(5)
         except Exception as exc:
             failed += 1
