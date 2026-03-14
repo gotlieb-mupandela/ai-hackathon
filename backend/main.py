@@ -771,66 +771,72 @@ async def agent_query(body: AgentQuery):
             "Keep responses concise, actionable, and data-focused."
         )
 
-        # Try Ollama first
+        answer_text = ""
+        model_used  = ""
+
+        # ── 1. Try Ollama (local, free, private) ────────────────────────────
         try:
-            import ollama
+            import ollama as _ollama
+            # Use a lightweight model by default — overridable via OLLAMA_MODEL env var
             ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
-            
             logger.info("Attempting agent query via Ollama (%s)", ollama_model)
-            response = ollama.chat(
+            _resp = _ollama.chat(
                 model=ollama_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": body.query},
-                ]
+                    {"role": "user",   "content": body.query},
+                ],
+                options={"num_predict": 512},  # keep responses concise
             )
-            answer_text = response['message']['content'].strip()
-            model_used = f"Ollama ({ollama_model})"
-            logger.info("Agent query handled by Ollama")
-            
+            answer_text = _resp['message']['content'].strip()
+            model_used  = f"Ollama/{ollama_model}"
+            logger.info("Agent query handled by Ollama (%s)", ollama_model)
+
         except Exception as ollama_exc:
-            logger.warning("Ollama failed (%s), falling back to OpenRouter/Gemini", ollama_exc)
-            
+            logger.warning("Ollama unavailable (%s) — trying OpenRouter", ollama_exc)
+
+            # ── 2. Try OpenRouter ────────────────────────────────────────────
             openrouter_key   = os.getenv("OPENROUTER_API_KEY", "")
             openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
-            
             if openrouter_key:
-                # ── OpenRouter ─────────────────────────────────────────────
-                resp = _req.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {openrouter_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://newera-editorial.app",
-                        "X-Title": "NewEra Editorial Agent",
-                    },
-                    json={
-                        "model": openrouter_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": body.query},
-                        ],
-                        "temperature": 0.7,
-                    },
-                    timeout=60,
-                )
-                resp.raise_for_status()
-                answer_text = resp.json()["choices"][0]["message"]["content"].strip()
-                model_used  = openrouter_model
-                logger.info("Agent query handled by OpenRouter/%s", openrouter_model)
-    
-            else:
-                # ── Fallback to Gemini if no OpenRouter key ─────────────────
-                logger.warning("OPENROUTER_API_KEY not set — falling back to Gemini")
+                try:
+                    resp = _req.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {openrouter_key}",
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": "https://newera-editorial.app",
+                            "X-Title": "NewEra Editorial Agent",
+                        },
+                        json={
+                            "model": openrouter_model,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user",   "content": body.query},
+                            ],
+                            "temperature": 0.7,
+                        },
+                        timeout=60,
+                    )
+                    resp.raise_for_status()
+                    answer_text = resp.json()["choices"][0]["message"]["content"].strip()
+                    model_used  = openrouter_model
+                    logger.info("Agent query handled by OpenRouter/%s", openrouter_model)
+                except Exception as or_exc:
+                    logger.warning("OpenRouter failed (%s) — falling back to Gemini", or_exc)
+
+            # ── 3. Final fallback: Google Gemini ────────────────────────────
+            if not answer_text:
+                logger.info("Using Gemini as final fallback for agent query")
                 from google import genai as _genai
                 gemini_client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
                 gr = gemini_client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.0-flash-lite",
                     contents=[f"System context:\n{system_prompt}\n\nUser query: {body.query}"],
                     config=_genai.types.GenerateContentConfig(temperature=0.7),
                 )
                 answer_text = (gr.text or "").strip()
-                model_used  = "gemini-2.0-flash"
+                model_used  = "gemini-2.0-flash-lite"
                 logger.info("Agent query handled by Gemini fallback")
 
         logger.info("Agent query: %s", body.query[:100])
