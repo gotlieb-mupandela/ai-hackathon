@@ -32,14 +32,19 @@ Extract the following four pieces of information:
    - If you genuinely cannot find it, return 0.
 
 2. SECTION
-   New Era has EXACTLY these four sections. Pick the ONE that best fits the content:
+   FIRST: Look at the TOP of the page for a section keyword banner or header label. It will say one of:
+   Sport, Business, Vibez!, AgriToday, News, or Solzi.
+   Use that label directly if you see it.
+
+   If no section keyword is visible at the top, classify by content:
+   - "News"      — general news, politics, national affairs, government, current events
    - "Sport"     — football, athletics, rugby, netball, cricket, any sports news
    - "Business"  — economy, finance, companies, NAD/N$, markets, trade, investment
    - "Vibez!"    — entertainment, celebrities, music, fashion, lifestyle, arts, culture
    - "AgriToday" — farming, agriculture, livestock, crops, irrigation, rural development
+   - "Solzi"     — community news, social affairs, human interest, local stories
 
-   IMPORTANT: These are the ONLY four valid sections. There is NO "News", "Politics" or any other section.
-   If the content does not clearly fit one section, choose the closest match from the four above.
+   IMPORTANT: These are the ONLY six valid sections. Return exactly one of the values above.
 
 3. HEADLINE
    - Copy the single largest, most prominent headline exactly as it appears on the page.
@@ -56,7 +61,7 @@ Respond with ONLY a valid JSON object. No markdown, no explanation, no extra tex
   "tags": ["football", "COSAFA", "NFA", "Namibia", "victory"]
 }"""
 
-VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday"}
+VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday", "News", "Solzi"}
 
 SECTION_ALIASES = {
     "sport": "Sport",
@@ -74,10 +79,16 @@ SECTION_ALIASES = {
     "agri": "AgriToday",
     "agriculture": "AgriToday",
     "farming": "AgriToday",
-    "news": "Sport",
-    "general": "Sport",
-    "politics": "Sport",
-    "national": "Sport",
+    "news": "News",
+    "general news": "News",
+    "politics": "News",
+    "national": "News",
+    "general": "News",
+    "solzi": "Solzi",
+    "community": "Solzi",
+    "social": "Solzi",
+    "human interest": "Solzi",
+    "local": "Solzi",
 }
 
 # Gemini fallback client (only used when OpenRouter key is absent)

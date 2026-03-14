@@ -13,20 +13,21 @@ import {
 import './Pipeline.css';
 
 const SECTION_FILENAME_MAP = {
-  News: 'news.pdf',
-  Sport: 'sport.pdf',
-  Business: 'business.pdf',
-  Vibez: 'vibez.pdf',
+  News:      'news.pdf',
+  Sport:     'sport.pdf',
+  Business:  'business.pdf',
+  'Vibez!':  'vibez.pdf',
+  Vibez:     'vibez.pdf',
   AgriToday: 'agritoday.pdf',
+  Solzi:     'solzi.pdf',
 };
 
 const STEP_NAMES = [
-  'Analyze Pages',
-  'Fetch Pages',
-  'Sort by Page Number',
+  'Fetch & Sort Pages',
   'Merge Full Newspaper',
-  'Category Segmentation',
-  'Upload Outputs',
+  'AI Analyze All Pages',
+  'Split by Section',
+  'Upload All PDFs',
   'Publish Edition',
 ];
 
@@ -178,243 +179,167 @@ export default function Pipeline() {
     setProgress(0);
 
     try {
-      // Step 0: Smart page analysis — use filename numbers first, AI only when needed
+      // ── Step 0: Fetch & Sort ────────────────────────────────────────
       let start = Date.now();
       updateStep(0, 'running');
       addLog('=== Pipeline started ===');
+      addLog('Fetching uploaded pages...');
 
-      const allPagesToday = await getPages(todayStr);
+      const allPages = await getPages(todayStr);
 
-      if (allPagesToday.length === 0) {
+      if (allPages.length === 0) {
         addLog('[ERROR] No pages found. Upload PDF pages first.');
         updateStep(0, 'error');
         setIsRunning(false);
         return;
       }
 
-      addLog(`Found ${allPagesToday.length} pages — detecting page numbers...`);
+      // Sort by page number extracted from filename (most reliable), then by stored page_number
+      const sortedPages = [...allPages].sort((a, b) => {
+        const numA = extractPageNumberFromFilename(a.filename) ?? a.page_number ?? 9999;
+        const numB = extractPageNumberFromFilename(b.filename) ?? b.page_number ?? 9999;
+        if (numA !== numB) return numA - numB;
+        return (a.filename || '').localeCompare(b.filename || '');
+      });
 
-      // Split pages: ones with numbers in filename vs ones that need AI
-      const filenameResolved = [];
-      const needsAiAnalysis = [];
-
-      for (const page of allPagesToday) {
-        const pageNum = extractPageNumberFromFilename(page.filename);
-        if (pageNum != null) {
-          filenameResolved.push({ page, pageNum });
-        } else {
-          needsAiAnalysis.push(page);
-        }
-      }
-
-      // Instantly resolve filename-based pages (no API call needed)
-      let analysisSuccess = 0;
-      let analysisFailed = 0;
-
-      if (filenameResolved.length > 0) {
-        addLog(`  ${filenameResolved.length} pages have page numbers in their filenames — resolving instantly...`);
-        await Promise.all(
-          filenameResolved.map(async ({ page, pageNum }) => {
-            try {
-              await updatePage(page.id, {
-                page_number: pageNum,
-                section: page.section || null,
-                headline: page.headline || null,
-                tags: page.tags || [],
-                status: 'analysed',
-              });
-              addLog(`  ${page.filename} → page ${pageNum} (from filename)`);
-              analysisSuccess++;
-            } catch (err) {
-              addLog(`  [ERROR] ${page.filename}: ${err.message}`);
-              analysisFailed++;
-            }
-          })
-        );
-      }
-
-      // AI-analyze only the pages without clear filename numbers
-      if (needsAiAnalysis.length > 0) {
-        addLog(`  ${needsAiAnalysis.length} pages need AI vision analysis — running ALL simultaneously...`);
-
-        const results = await Promise.allSettled(
-          needsAiAnalysis.map(async (page) => {
-            const blob = await downloadFromStorage('Upload', page.storage_path);
-            const file = new File([blob], page.filename, { type: 'application/pdf' });
-            const analysis = await analyzePage(file);
-            await updatePage(page.id, {
-              page_number: analysis.page_number,
-              section: analysis.section,
-              headline: analysis.headline,
-              tags: analysis.tags,
-              status: 'analysed',
-            });
-            return { page, analysis };
-          })
-        );
-
-        results.forEach((r, idx) => {
-          if (r.status === 'fulfilled') {
-            const { page, analysis } = r.value;
-            addLog(`  ${page.filename} → page ${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
-            analysisSuccess++;
-          } else {
-            addLog(`  [ERROR] ${needsAiAnalysis[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
-            analysisFailed++;
-          }
-        });
-      } else {
-        addLog('  All pages resolved from filenames — no AI calls needed!');
-      }
-
-      addLog(`Analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
-      if (analysisFailed > 0) {
-        addLog(`[WARN] ${analysisFailed} pages failed — check backend at http://localhost:8000`);
-      }
+      addLog(`Found ${sortedPages.length} pages — order:`);
+      sortedPages.forEach(p => {
+        const num = extractPageNumberFromFilename(p.filename) ?? p.page_number;
+        addLog(`  p${num ?? '?'} → ${p.filename}`);
+      });
 
       updateStep(0, 'done', Date.now() - start);
 
-      // Step 1: Fetch pages
+      // ── Step 1: Merge Full Newspaper ────────────────────────────────
       start = Date.now();
       updateStep(1, 'running');
-      addLog('Fetching analysed pages from Supabase...');
+      addLog(`Downloading ${sortedPages.length} PDFs in parallel...`);
 
-      const pages = await getPages(todayStr);
-
-      if (pages.length === 0) {
-        addLog('[ERROR] No pages found. Upload PDF pages first.');
-        updateStep(1, 'error');
-        setIsRunning(false);
-        return;
-      }
-
-      addLog(`Found ${pages.length} pages`);
-      updateStep(1, 'done', Date.now() - start);
-
-      // Step 2: Sort by page number (with secondary sort for stability)
-      start = Date.now();
-      updateStep(2, 'running');
-      addLog('Sorting pages by page number...');
-      
-      const sortedPages = [...pages].sort((a, b) => {
-        // Primary: page_number (null treated as 9999)
-        const numA = a.page_number ?? 9999;
-        const numB = b.page_number ?? 9999;
-        if (numA !== numB) return numA - numB;
-        
-        // Secondary: uploaded_at
-        const timeCompare = (a.uploaded_at || '').localeCompare(b.uploaded_at || '');
-        if (timeCompare !== 0) return timeCompare;
-        
-        // Tertiary: filename
-        return (a.filename || '').localeCompare(b.filename || '');
-      });
-      
-      sortedPages.forEach(p => {
-        const pageNum = p.page_number != null ? `p${p.page_number}` : 'p??';
-        addLog(`  ${pageNum} → ${p.filename} [${p.section || 'Unknown'}]`);
-        
-        // Warn about missing page numbers
-        if (p.page_number == null) {
-          addLog(`  [WARN] ${p.filename} has no page_number (analysis may have failed)`);
-        }
-      });
-      
-      updateStep(2, 'done', Date.now() - start);
-
-      // Step 3: Download and merge all pages into full_paper.pdf
-      start = Date.now();
-      updateStep(3, 'running');
-      addLog(`Downloading and merging ${sortedPages.length} PDFs...`);
-
-      // Download ALL PDFs in parallel
-      addLog(`  Downloading ${sortedPages.length} files in parallel...`);
       const downloadResults = await Promise.allSettled(
-        sortedPages.map((page) => downloadFromStorage('Upload', page.storage_path))
+        sortedPages.map(page => downloadFromStorage('Upload', page.storage_path))
       );
 
-      const pdfBlobs = [];
-      downloadResults.forEach((result, idx) => {
-        if (result.status === 'fulfilled') {
-          pdfBlobs.push(result.value);
-        } else {
-          pdfBlobs.push(null);
-          addLog(`  [WARN] Could not download ${sortedPages[idx].filename}: ${result.reason?.message}`);
-        }
+      // Build blob array aligned with sortedPages (null on failure)
+      const pdfBlobs = downloadResults.map((r, idx) => {
+        if (r.status === 'fulfilled') return r.value;
+        addLog(`  [WARN] Could not download ${sortedPages[idx].filename}: ${r.reason?.message}`);
+        return null;
       });
-      addLog(`  Downloaded ${pdfBlobs.filter(Boolean).length}/${sortedPages.length} files`);
 
       const validBlobs = pdfBlobs.filter(Boolean);
+      addLog(`  Downloaded ${validBlobs.length}/${sortedPages.length} — merging into full_paper.pdf...`);
+
       const fullPaperBytes = await mergePdfs(validBlobs);
-      addLog(`Full paper merged: ${validBlobs.length} pages`);
-      updateStep(3, 'done', Date.now() - start);
+      addLog(`Full newspaper merged: ${validBlobs.length} pages in order`);
+      updateStep(1, 'done', Date.now() - start);
 
-      // Step 4: Segment by category
+      // ── Step 2: AI Analyze ALL Pages simultaneously ─────────────────
       start = Date.now();
-      updateStep(4, 'running');
-      addLog('Segmenting pages by section...');
+      updateStep(2, 'running');
+      addLog(`Sending all ${sortedPages.length} pages to AI vision simultaneously...`);
+      addLog('AI will read the section keyword at the top of each page (News, Sport, Business, Vibez!, AgriToday, Solzi)');
 
-      const sections = {};
-      sortedPages.forEach((page, idx) => {
-        const section = page.section || 'News';
-        if (!sections[section]) sections[section] = [];
-        sections[section].push({ page, blobIndex: idx });
-      });
-
-      const sectionOutputs = {};
-      for (const [section, items] of Object.entries(sections)) {
-        const sectionBlobs = items.map(item => pdfBlobs[item.blobIndex]).filter(Boolean);
-        if (sectionBlobs.length > 0) {
-          const sectionBytes = await mergePdfs(sectionBlobs);
-          const filename = SECTION_FILENAME_MAP[section] || `${section.toLowerCase()}.pdf`;
-          sectionOutputs[section] = { bytes: sectionBytes, filename };
-          addLog(`  Created ${section}: ${filename} (${sectionBlobs.length} pages)`);
-        }
-      }
-      updateStep(4, 'done', Date.now() - start);
-
-      // Step 5: Upload outputs to Supabase Storage
-      start = Date.now();
-      updateStep(5, 'running');
-      addLog('Uploading merged PDFs to Supabase Storage...');
-
-      const storagePaths = {};
-
-      // Build all upload tasks, then run them all in parallel
-      const uploadTasks = [];
-
-      const fullPaperPath = `${todayStr}/full_paper.pdf`;
-      const fullPaperBlob = new Blob([fullPaperBytes], { type: 'application/pdf' });
-      uploadTasks.push(
-        uploadToStorage('outputs', fullPaperPath, fullPaperBlob).then(() => {
-          storagePaths.full_paper = fullPaperPath;
-          addLog(`  Uploaded full_paper.pdf`);
+      const analysisResults = await Promise.allSettled(
+        sortedPages.map(async (page, idx) => {
+          const blob = pdfBlobs[idx];
+          if (!blob) throw new Error('PDF not downloaded');
+          const file = new File([blob], page.filename, { type: 'application/pdf' });
+          const analysis = await analyzePage(file);
+          // Also update stored page_number if we didn't have one
+          const pageNum = extractPageNumberFromFilename(page.filename) ?? analysis.page_number;
+          await updatePage(page.id, {
+            page_number: pageNum,
+            section: analysis.section,
+            headline: analysis.headline,
+            tags: analysis.tags,
+            status: 'analysed',
+          });
+          return { page, analysis, pageNum };
         })
       );
 
+      let analysisSuccess = 0;
+      let analysisFailed = 0;
+      const analyzedPages = [];
+
+      analysisResults.forEach((r, idx) => {
+        if (r.status === 'fulfilled') {
+          const { page, analysis, pageNum } = r.value;
+          analyzedPages.push({ ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline });
+          addLog(`  p${pageNum} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename}`);
+          analysisSuccess++;
+        } else {
+          addLog(`  [ERROR] ${sortedPages[idx].filename}: ${r.reason?.message || 'Unknown'}`);
+          // Fall back to 'News' section if AI failed
+          analyzedPages.push({ ...sortedPages[idx], section: sortedPages[idx].section || 'News' });
+          analysisFailed++;
+        }
+      });
+
+      addLog(`AI analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
+      updateStep(2, 'done', Date.now() - start);
+
+      // ── Step 3: Split by Section ────────────────────────────────────
+      start = Date.now();
+      updateStep(3, 'running');
+      addLog('Splitting pages by identified section...');
+
+      const sectionGroups = {};
+      analyzedPages.forEach((page, idx) => {
+        const section = page.section || 'News';
+        if (!sectionGroups[section]) sectionGroups[section] = [];
+        sectionGroups[section].push({ page, blobIndex: idx });
+      });
+
+      const sectionOutputs = {};
+      for (const [section, items] of Object.entries(sectionGroups)) {
+        const sectionBlobs = items.map(item => pdfBlobs[item.blobIndex]).filter(Boolean);
+        if (sectionBlobs.length > 0) {
+          const sectionBytes = await mergePdfs(sectionBlobs);
+          const filename = SECTION_FILENAME_MAP[section] || `${section.toLowerCase().replace(/[^a-z0-9]/g, '')}.pdf`;
+          sectionOutputs[section] = { bytes: sectionBytes, filename };
+          addLog(`  ${section}: ${sectionBlobs.length} pages → ${filename}`);
+        }
+      }
+
+      updateStep(3, 'done', Date.now() - start);
+
+      // ── Step 4: Upload Full Paper + All Section PDFs in parallel ────
+      start = Date.now();
+      updateStep(4, 'running');
+      addLog(`Uploading full paper + ${Object.keys(sectionOutputs).length} section PDFs to storage...`);
+
+      const storagePaths = {};
+      const uploadTasks = [];
+
+      // Upload full newspaper
+      const fullPaperPath = `${todayStr}/full_paper.pdf`;
+      uploadTasks.push(
+        uploadToStorage('outputs', fullPaperPath, new Blob([fullPaperBytes], { type: 'application/pdf' }))
+          .then(() => { storagePaths.full_paper = fullPaperPath; addLog('  Uploaded full_paper.pdf'); })
+      );
+
+      // Upload each section PDF
       for (const [section, { bytes, filename }] of Object.entries(sectionOutputs)) {
         const path = `${todayStr}/${filename}`;
-        const blob = new Blob([bytes], { type: 'application/pdf' });
-        const key = section.toLowerCase().replace(/\s+/g, '_');
+        const key = section.toLowerCase().replace(/[^a-z0-9]/g, '');
         uploadTasks.push(
-          uploadToStorage('outputs', path, blob).then(() => {
-            storagePaths[key] = path;
-            addLog(`  Uploaded ${filename}`);
-          })
+          uploadToStorage('outputs', path, new Blob([bytes], { type: 'application/pdf' }))
+            .then(() => { storagePaths[key] = path; addLog(`  Uploaded ${filename}`); })
         );
       }
 
-      addLog(`  Uploading ${uploadTasks.length} files in parallel...`);
       await Promise.all(uploadTasks);
-      updateStep(5, 'done', Date.now() - start);
+      addLog(`All ${uploadTasks.length} PDFs uploaded`);
+      updateStep(4, 'done', Date.now() - start);
 
-      // Step 6: Publish edition
+      // ── Step 5: Publish Edition ─────────────────────────────────────
       start = Date.now();
-      updateStep(6, 'running');
-      addLog('Publishing edition record...');
+      updateStep(5, 'running');
+      addLog('Publishing edition to E-Paper viewer...');
 
       const sectionsMap = {};
-      for (const [section, items] of Object.entries(sections)) {
+      for (const [section, items] of Object.entries(sectionGroups)) {
         sectionsMap[section] = items.map(item => item.page.page_number).filter(Boolean);
       }
 
@@ -425,7 +350,7 @@ export default function Pipeline() {
         expected_pages: edition.expected_pages,
         deadline: edition.deadline,
         published_at: new Date().toLocaleTimeString('en-GB'),
-        pages: sortedPages.map(p => ({
+        pages: analyzedPages.map(p => ({
           filename: p.filename,
           page_number: p.page_number,
           section: p.section,
@@ -440,7 +365,9 @@ export default function Pipeline() {
       });
 
       addLog(`Edition published at ${new Date().toLocaleTimeString('en-GB')}`);
-      updateStep(6, 'done', Date.now() - start);
+      addLog(`Sections published: ${Object.keys(sectionGroups).join(', ')}`);
+      updateStep(5, 'done', Date.now() - start);
+
 
       setProgress(100);
       setIsComplete(true);

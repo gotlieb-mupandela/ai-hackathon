@@ -5,12 +5,13 @@ import PdfViewer from '../components/PdfViewer';
 import './EPaperViewer.css';
 
 const CATEGORIES = [
-  { key: 'full_paper', label: 'FullPaper' },
-  { key: 'sport', label: 'NewEra Sport' },
-  { key: 'business', label: 'NewEra Business' },
-  { key: 'vibez', label: 'NewEra Vibez' },
-  { key: 'agritoday', label: 'NewEra AgriToday' },
-  { key: 'magazines', label: 'Magazines' },
+  { key: 'full_paper', label: 'Full Paper' },
+  { key: 'news',       label: 'NewEra News' },
+  { key: 'sport',      label: 'NewEra Sport' },
+  { key: 'business',   label: 'NewEra Business' },
+  { key: 'vibez',      label: 'NewEra Vibez!' },
+  { key: 'agritoday',  label: 'NewEra AgriToday' },
+  { key: 'solzi',      label: 'NewEra Solzi' },
 ];
 
 function buildEditionCards(editions) {
