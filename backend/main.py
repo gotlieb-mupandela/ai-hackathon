@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -201,19 +201,25 @@ async def toggle_auto_send():
 
 
 @app.post("/notify-subscribers")
-async def notify_subscribers(body: NotifyBody, background_tasks: BackgroundTasks):
+async def notify_subscribers(body: NotifyBody):
     """
-    Trigger WhatsApp PDF delivery to all subscribers.
-    Runs in a background thread so the API responds immediately.
+    Trigger WhatsApp delivery to all subscribers.
+    If Green API is configured, sends messages directly.
+    Otherwise returns wa.me links the admin can click to send manually.
     """
     if not body.edition_date.strip():
         raise HTTPException(status_code=400, detail="edition_date is required")
 
-    logger.info("Queued WhatsApp notifications for edition %s", body.edition_date)
+    logger.info("Sending WhatsApp notifications for edition %s", body.edition_date)
 
-    background_tasks.add_task(send_pdf_to_all, body.edition_date)
-
-    return {"status": "queued", "edition_date": body.edition_date}
+    try:
+        result = send_pdf_to_all(body.edition_date)
+        result["status"] = "sent" if result.get("using_api") else "links"
+        result["edition_date"] = body.edition_date
+        return result
+    except Exception as exc:
+        logger.error("notify_subscribers failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ─── Designer Account Creation (Admin only) ──────────────────

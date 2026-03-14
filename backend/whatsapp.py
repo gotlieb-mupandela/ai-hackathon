@@ -1,48 +1,41 @@
 """
-WhatsApp auto-send via desktop automation.
-Downloads the published PDF from Supabase Storage, saves it to ~/Downloads,
-then uses pywhatkit + pyautogui to send it to each subscriber via WhatsApp Web.
+WhatsApp notification system for NewEra Editorial.
 
-Each subscriber can have section preferences — they only receive the sections
-they subscribed to (full_paper, news, sport, business, vibez, agritoday, solzi).
-Default when no preference is set: full_paper only.
+Sends edition links to subscribers when a new edition is published.
+Uses direct HTTP requests via the Green API (free tier) or falls back
+to URL-only logging when no API is configured.
 
-Requirements:
-  - Backend must run on the same machine where WhatsApp Web is logged in.
-  - User should not touch mouse/keyboard while sending is in progress.
+Each subscriber can have section preferences — they only receive the
+sections they subscribed to.
+
+Environment variables (add to .env):
+  WHATSAPP_API_URL      - Green API instance URL (e.g. https://7103.api.greenapi.com)
+  WHATSAPP_ID_INSTANCE  - Green API instance ID
+  WHATSAPP_API_TOKEN    - Green API token
 """
 
 import json
 import logging
 import os
-import shutil
 import time
 from pathlib import Path
 
-import pyautogui
-import pywhatkit
-from supabase import create_client
+import requests
 
 logger = logging.getLogger(__name__)
 
 SUBSCRIBERS_FILE = Path(__file__).parent / "subscribers.json"
 
-# All available sections subscribers can opt into
 ALL_SECTIONS = ["full_paper", "news", "sport", "business", "vibez", "agritoday", "solzi"]
-
-# Disable pyautogui fail-safe pause (we handle our own timing)
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.5
 
 
 # ─── Subscriber persistence ─────────────────────────────────
 
 def load_subscribers() -> dict:
-    """Load subscribers data from JSON file. Returns safe default on any error."""
+    """Load subscribers data from JSON file."""
     default = {
         "numbers": [],
         "auto_send": True,
-        # Maps phone → list of section keys they want to receive
         "preferences": {}
     }
 
@@ -94,7 +87,6 @@ def add_number(number: str) -> dict:
     cleaned = number.strip()
     if cleaned and cleaned not in data["numbers"]:
         data["numbers"].append(cleaned)
-        # Default preference: full newspaper
         if cleaned not in data["preferences"]:
             data["preferences"][cleaned] = ["full_paper"]
         save_subscribers_data(data)
@@ -113,12 +105,11 @@ def remove_number(number: str) -> dict:
 
 
 def update_preferences(number: str, sections: list[str]) -> dict:
-    """Set which sections a subscriber receives. Returns updated data."""
+    """Set which sections a subscriber receives."""
     data = load_subscribers()
     cleaned = number.strip()
     if cleaned not in data["numbers"]:
         raise ValueError(f"Number {cleaned} is not a subscriber")
-    # Validate section keys
     valid = [s for s in sections if s in ALL_SECTIONS]
     if not valid:
         valid = ["full_paper"]
@@ -127,53 +118,8 @@ def update_preferences(number: str, sections: list[str]) -> dict:
     return data
 
 
-# ─── PDF download from Supabase ──────────────────────────────
+# ─── Section URL helpers ─────────────────────────────────────
 
-def _get_supabase_client():
-    url = os.getenv("SUPABASE_URL", "").strip()
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-    if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env")
-    return create_client(url, key)
-
-
-def download_pdf_from_supabase(edition_date: str) -> str:
-    """
-    Download full_paper.pdf from the 'outputs' bucket in Supabase Storage.
-    Returns local temp file path.
-    """
-    supabase = _get_supabase_client()
-    storage_path = f"{edition_date}/full_paper.pdf"
-
-    logger.info("Downloading %s from Supabase Storage...", storage_path)
-    response = supabase.storage.from_("outputs").download(storage_path)
-
-    if not response:
-        raise RuntimeError(f"Empty response downloading {storage_path}")
-
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-    tmp.write(response)
-    tmp.flush()
-    tmp.close()
-    logger.info("Downloaded PDF to temp: %s (%d bytes)", tmp.name, len(response))
-    return tmp.name
-
-
-def save_pdf_to_downloads(local_pdf_path: str, edition_date: str) -> str:
-    """Copy the PDF to the user's Downloads folder with a nice filename."""
-    downloads_dir = Path(os.path.expanduser("~")) / "Downloads"
-    downloads_dir.mkdir(exist_ok=True)
-    filename = f"NewEra_{edition_date}_FullPaper.pdf"
-    destination = downloads_dir / filename
-    shutil.copy2(local_pdf_path, destination)
-    logger.info("PDF saved to Downloads: %s", destination)
-    return str(destination)
-
-
-# ─── WhatsApp sending via desktop automation ─────────────────
-
-# Maps section key → storage filename
 SECTION_FILE_MAP = {
     "full_paper": "full_paper.pdf",
     "news":       "news.pdf",
@@ -202,32 +148,85 @@ def _build_section_url(edition_date: str, section_key: str) -> str:
     return f"{supabase_url}/storage/v1/object/public/outputs/{edition_date}/{filename}"
 
 
-def send_whatsapp_pdf(phone: str, pdf_path: str, edition_date: str, sections: list[str] = None) -> None:
-    """
-    Send the subscriber their chosen section PDFs via WhatsApp Web link.
-    If sections is None or empty, defaults to full_paper.
-    """
+def _build_message(edition_date: str, sections: list[str]) -> str:
+    """Build the WhatsApp message text with download links for chosen sections."""
     if not sections:
         sections = ["full_paper"]
 
-    # Build one URL per subscribed section
-    lines = [f"New Era Edition — {edition_date} is ready!\n"]
+    lines = [f"*New Era Edition — {edition_date}*\nYour edition is ready!\n"]
     for section_key in sections:
         label = SECTION_LABEL_MAP.get(section_key, section_key)
         url = _build_section_url(edition_date, section_key)
-        lines.append(f"{label}:\n{url}")
+        lines.append(f"*{label}:*\n{url}")
 
-    message = "\n\n".join(lines)
-    logger.info("Sending WhatsApp message to %s for sections: %s", phone, sections)
+    return "\n\n".join(lines)
 
-    pywhatkit.sendwhatmsg_instantly(
-        phone_no=phone,
-        message=message,
-        wait_time=15,
-        tab_close=True,
-    )
-    time.sleep(8)
-    logger.info("Message sent to %s", phone)
+
+# ─── WhatsApp sending via Green API ──────────────────────────
+
+def _get_api_config() -> dict | None:
+    """Return Green API config or None if not configured."""
+    api_url    = os.getenv("WHATSAPP_API_URL", "").strip().rstrip("/")
+    instance   = os.getenv("WHATSAPP_ID_INSTANCE", "").strip()
+    api_token  = os.getenv("WHATSAPP_API_TOKEN", "").strip()
+
+    if api_url and instance and api_token:
+        return {"url": api_url, "instance": instance, "token": api_token}
+    return None
+
+
+def _normalize_phone(phone: str) -> str:
+    """Convert +264812345678 to 264812345678 (strip leading +)."""
+    return phone.lstrip("+").replace(" ", "").replace("-", "")
+
+
+def _send_via_green_api(phone: str, message: str, config: dict) -> bool:
+    """Send a WhatsApp message using Green API. Returns True on success."""
+    chat_id = f"{_normalize_phone(phone)}@c.us"
+    endpoint = f"{config['url']}/waInstance{config['instance']}/sendMessage/{config['token']}"
+
+    payload = {
+        "chatId": chat_id,
+        "message": message,
+    }
+
+    try:
+        resp = requests.post(endpoint, json=payload, timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info("Green API response for %s: %s", phone, result)
+        return True
+    except requests.RequestException as exc:
+        logger.error("Green API failed for %s: %s", phone, exc)
+        return False
+
+
+def _send_via_direct_link(phone: str, message: str) -> bool:
+    """
+    Fallback: use wa.me link generation (logs the link for manual sending).
+    Returns True — we log the link so the admin can click it.
+    """
+    import urllib.parse
+    encoded = urllib.parse.quote(message)
+    clean_phone = _normalize_phone(phone)
+    link = f"https://wa.me/{clean_phone}?text={encoded}"
+    logger.info("WhatsApp link for %s: %s", phone, link)
+    return True
+
+
+def send_whatsapp_message(phone: str, edition_date: str, sections: list[str] = None) -> bool:
+    """Send a WhatsApp message to a single subscriber with their section links."""
+    message = _build_message(edition_date, sections)
+    config = _get_api_config()
+
+    if config:
+        return _send_via_green_api(phone, message, config)
+    else:
+        logger.warning(
+            "No WhatsApp API configured (WHATSAPP_API_URL / WHATSAPP_ID_INSTANCE / WHATSAPP_API_TOKEN). "
+            "Using wa.me link fallback."
+        )
+        return _send_via_direct_link(phone, message)
 
 
 def send_pdf_to_all(edition_date: str) -> dict:
@@ -236,7 +235,7 @@ def send_pdf_to_all(edition_date: str) -> dict:
     Returns a summary dict.
     """
     data = load_subscribers()
-    numbers = data.get("numbers", [])
+    numbers   = data.get("numbers", [])
     auto_send = data.get("auto_send", True)
     preferences = data.get("preferences", {})
 
@@ -251,17 +250,33 @@ def send_pdf_to_all(edition_date: str) -> dict:
     logger.info("Sending to %d subscribers...", len(numbers))
     sent = 0
     failed = 0
+    links = []
+
+    config = _get_api_config()
+    using_api = config is not None
 
     for phone in numbers:
-        try:
-            sections = preferences.get(phone, ["full_paper"])
-            send_whatsapp_pdf(phone, "", edition_date, sections)
-            sent += 1
-            logger.info("Sent to %s (%d/%d) — sections: %s", phone, sent, len(numbers), sections)
-            time.sleep(5)
-        except Exception as exc:
-            failed += 1
-            logger.error("Failed to send to %s: %s", phone, exc)
+        sections = preferences.get(phone, ["full_paper"])
+        message = _build_message(edition_date, sections)
 
-    logger.info("WhatsApp send complete: %d sent, %d failed", sent, failed)
-    return {"sent": sent, "failed": failed}
+        if using_api:
+            success = _send_via_green_api(phone, message, config)
+            if success:
+                sent += 1
+            else:
+                failed += 1
+            time.sleep(2)
+        else:
+            import urllib.parse
+            clean_phone = _normalize_phone(phone)
+            encoded = urllib.parse.quote(message)
+            link = f"https://wa.me/{clean_phone}?text={encoded}"
+            links.append({"phone": phone, "link": link, "sections": sections})
+            sent += 1
+
+    logger.info("WhatsApp send complete: %d sent, %d failed, api=%s", sent, failed, using_api)
+
+    result = {"sent": sent, "failed": failed, "using_api": using_api}
+    if links:
+        result["links"] = links
+    return result

@@ -6,7 +6,5 @@ Pillow
 python-dotenv
 google-genai
 ollama
-pywhatkit
-pyautogui
 supabase
 requests

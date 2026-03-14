@@ -375,12 +375,23 @@ export default function Pipeline() {
       setIsComplete(true);
       addLog('=== Pipeline complete — edition published ===');
 
-      // Trigger WhatsApp notifications to all subscribers (runs in background on backend)
+      // Send WhatsApp notifications to all subscribers
       try {
         addLog('Sending WhatsApp notifications to subscribers...');
         const notifyResult = await notifySubscribers(todayStr);
-        if (notifyResult.status === 'queued') {
-          addLog('WhatsApp notifications queued — PDFs will be sent in the background.');
+
+        if (notifyResult.status === 'sent') {
+          addLog(`WhatsApp messages sent via API: ${notifyResult.sent} delivered, ${notifyResult.failed} failed`);
+        } else if (notifyResult.status === 'links') {
+          addLog(`WhatsApp API not configured — ${notifyResult.sent} wa.me links generated.`);
+          if (notifyResult.links?.length > 0) {
+            notifyResult.links.forEach(entry => {
+              addLog(`  ${entry.phone} [${entry.sections.join(', ')}] → ${entry.link}`);
+            });
+            addLog('Click the links above to send messages manually via WhatsApp Web.');
+          }
+        } else if (notifyResult.skipped) {
+          addLog('WhatsApp auto-send is disabled — skipped.');
         }
       } catch (err) {
         addLog(`[WARN] WhatsApp notifications failed: ${err.message} (edition was still published successfully)`);
