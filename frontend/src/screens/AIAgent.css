@@ -43,10 +43,12 @@
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
+  padding-bottom: 0;
 }
 
 .messages-bottom-padding {
-  height: 10px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 /* Message Wrappers */
@@ -272,7 +274,7 @@
 
 /* Input Section */
 .agent-input-section {
-  padding: 0 2rem 1.5rem 2rem;
+  padding: 1rem 2rem;
   background: transparent;
   display: flex;
   flex-direction: column;
@@ -280,6 +282,7 @@
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
+  flex-shrink: 0;
 }
 
 .agent-error {
