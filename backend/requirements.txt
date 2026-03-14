@@ -8,3 +8,4 @@ google-genai
 ollama
 supabase
 requests
+pypdf

@@ -332,3 +332,30 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ─── PDF Password Row ──────────────────────────────────────── */
+
+.subscriber-password-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 4px;
+  flex-wrap: wrap;
+}
+
+.subscriber-password-label {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+
+.subscriber-otp-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+  padding: 2px 9px;
+  border-radius: 20px;
+  letter-spacing: 0.02em;
+}

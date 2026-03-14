@@ -2,7 +2,7 @@
  * API client — Supabase-first architecture.
  * - File uploads → Supabase Storage
  * - Page/edition data → Supabase tables (pages, editions)
- * - PDF analysis → Python backend (POST /analyze)
+ * - PDF analysis → Python backend (POST /analyze or POST /pipeline/analyze-all)
  */
 import axios from 'axios';
 import { getSupabaseClient } from './lib/supabase';
@@ -27,6 +27,24 @@ export const analyzePage = async (file) => {
   const formData = new FormData();
   formData.append('file', file);
   const res = await analyzer.post('/analyze', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
+};
+
+/**
+ * Analyze all PDF pages in a single batch request.
+ * Backend tries instant PDF text extraction first; falls back to AI vision per page.
+ * All pages are processed in parallel — much faster than calling /analyze one by one.
+ *
+ * @param {File[]} files - Array of PDF File objects to analyze
+ * @returns {Promise<Array<{filename, page_number, section, headline, tags, method}>>}
+ *   Results array aligned with the input files order.
+ */
+export const analyzeAllPages = async (files) => {
+  const formData = new FormData();
+  files.forEach((f) => formData.append('files', f));
+  const res = await analyzer.post('/pipeline/analyze-all', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return res.data;

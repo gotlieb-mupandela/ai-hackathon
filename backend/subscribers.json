@@ -1,6 +1,14 @@
 {
   "numbers": [
-    "+26811002898"
+    "+264816603922"
   ],
-  "auto_send": true
+  "auto_send": true,
+  "preferences": {
+    "+264816603922": [
+      "full_paper"
+    ]
+  },
+  "passwords": {
+    "+264816603922": "952116"
+  }
 }
