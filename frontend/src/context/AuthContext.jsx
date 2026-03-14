@@ -147,9 +147,7 @@ export function AuthProvider({ children }) {
         setRole(null);
         return;
       }
-      // Only run detectRole when restoring session on initial load (INITIAL_SESSION).
-      // Skip SIGNED_IN and TOKEN_REFRESHED so we never overwrite role after sign-in or token refresh (those can race and set role to null).
-      if (event !== 'INITIAL_SESSION') return;
+      // Detect role on every auth state change (including after sign-in)
       detectRole(s.user.email);
     });
 
