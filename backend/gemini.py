@@ -1,7 +1,13 @@
 """
-Vision analysis for newspaper page images via OpenRouter.
-Uses meta-llama/llama-3.2-11b-vision-instruct through the OpenRouter API.
-Falls back to Google Gemini if OPENROUTER_API_KEY is not set.
+Newspaper page analysis for the New Era Editorial System.
+
+Classification strategy (in order):
+  1. DeepSeek (deepseek/deepseek-chat-v3-0324:free via OpenRouter)
+     — Used when embedded PDF text is available.  Fast, accurate, free.
+  2. Qwen VL 72B (qwen/qwen2.5-vl-72b-instruct:free via OpenRouter)
+     — Used for scanned / image-only pages.  Best free document-vision model.
+  3. Google Gemini
+     — Final fallback when the OpenRouter key is absent or exhausted.
 """
 
 import base64
@@ -18,162 +24,242 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
-ANALYSIS_PROMPT = """You are an AI assistant helping a Namibian newspaper called New Era automate their editorial workflow.
-
-You will be given an image of a single printed newspaper page. Read it carefully.
-
-Extract the following four pieces of information:
-
-1. PAGE NUMBER
-   - Find the page number printed on the page — usually in a corner at the top or bottom.
-   - It is a small whole number like 2, 5, 12, 24.
-   - IGNORE all other numbers: prices (N$), dates (2026), phone numbers, statistics, percentages.
-   - Return only the single integer page number.
-   - If you genuinely cannot find it, return 0.
-
-2. SECTION
-   FIRST: Look at the TOP of the page for a section keyword banner or header label. It will say one of:
-   Sport, Business, Vibez!, AgriToday, or News.
-   Use that label directly if you see it.
-
-   If no section keyword is visible at the top, classify by content:
-   - "News"      — general news, politics, national affairs, government, current events
-   - "Sport"     — football, athletics, rugby, netball, cricket, any sports news
-   - "Business"  — economy, finance, companies, NAD/N$, markets, trade, investment
-   - "Vibez!"    — entertainment, celebrities, music, fashion, lifestyle, arts, culture
-   - "AgriToday" — farming, agriculture, livestock, crops, irrigation, rural development
-
-   IMPORTANT: These are the ONLY five valid sections. Return exactly one of the values above.
-
-3. HEADLINE
-   - Copy the single largest, most prominent headline exactly as it appears on the page.
-
-4. TAGS
-   - Give exactly 5 short keywords describing the main content of this page.
-
-Respond with ONLY a valid JSON object. No markdown, no explanation, no extra text:
-
-{
-  "page_number": 5,
-  "section": "Sport",
-  "headline": "Namibia wins COSAFA Cup",
-  "tags": ["football", "COSAFA", "NFA", "Namibia", "victory"]
-}"""
+# ── Section metadata ──────────────────────────────────────────────────────────
 
 VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday", "News"}
 
 SECTION_ALIASES = {
-    "sport": "Sport",
-    "sports": "Sport",
-    "business": "Business",
-    "economy": "Business",
-    "finance": "Business",
-    "vibez": "Vibez!",
-    "vibez!": "Vibez!",
-    "vibe": "Vibez!",
-    "entertainment": "Vibez!",
-    "lifestyle": "Vibez!",
-    "agritoday": "AgriToday",
-    "agri today": "AgriToday",
-    "agri": "AgriToday",
-    "agriculture": "AgriToday",
-    "farming": "AgriToday",
-    "news": "News",
-    "general news": "News",
-    "politics": "News",
-    "national": "News",
-    "general": "News",
-    "community": "News",
-    "social": "News",
-    "human interest": "News",
-    "local": "News",
+    "sport": "Sport", "sports": "Sport",
+    "business": "Business", "economy": "Business", "finance": "Business",
+    "financial": "Business", "tenders": "Business", "trade": "Business",
+    "vibez": "Vibez!", "vibez!": "Vibez!", "vibe": "Vibez!",
+    "entertainment": "Vibez!", "lifestyle": "Vibez!", "culture": "Vibez!",
+    "agritoday": "AgriToday", "agri today": "AgriToday", "agri": "AgriToday",
+    "agriculture": "AgriToday", "farming": "AgriToday", "agricultural": "AgriToday",
+    "news": "News", "general": "News", "national": "News", "politics": "News",
+    "community": "News", "local": "News", "government": "News",
 }
 
-# Gemini fallback client (only used when OpenRouter key is absent)
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
+
+# Used when we have extracted text from the PDF
+TEXT_CLASSIFICATION_PROMPT = """You are an expert editorial classifier for the New Era newspaper in Namibia.
+
+Your only job is to read the newspaper page text below and determine which of the five sections it belongs to:
+
+  • News      — general news, politics, government, crime, courts, health, education, national/regional affairs
+  • Sport     — football, rugby, cricket, athletics, netball, basketball, any sports content
+  • Business  — economy, finance, markets, tenders, accountants, tax, companies, trade, investment, stock exchange, banking
+  • Vibez!    — entertainment, celebrities, music, fashion, movies, arts, concerts, lifestyle, culture
+  • AgriToday — farming, agriculture, livestock, crops, harvest, irrigation, rural development, food security
+
+IMPORTANT RULES:
+- Pages with tender notices, financial reports, company announcements, or accounting content → Business
+- Pages about athletes, match results, league tables, sports fixtures → Sport
+- Pages about musicians, actors, fashion, nightlife, events → Vibez!
+- Pages about farming, cattle, crops, green schemes → AgriToday
+- Everything else → News
+
+Newspaper text to classify:
+---
+{text}
+---
+
+Respond ONLY with a valid JSON object — no explanation, no markdown:
+{{"page_number": <integer or 0>, "section": "<one of: News|Sport|Business|Vibez!|AgriToday>", "headline": "<most prominent headline>", "tags": ["tag1","tag2","tag3","tag4","tag5"]}}"""
+
+
+# Used when we send an image to a vision model
+VISION_PROMPT = """You are an expert editorial analyst for the New Era newspaper in Namibia.
+
+You are given an image of a single printed newspaper page. Read ALL text visible on the page carefully — headers, banners, headlines, body text, captions.
+
+Determine the following four fields:
+
+1. PAGE NUMBER
+   - Find the page number printed on the page (corner, top or bottom). It is a small whole number like 2, 5, 12.
+   - IGNORE prices (N$), years (2026), phone numbers, statistics.
+   - Return 0 if you cannot find it.
+
+2. SECTION — this is the most important field.
+   STEP 1: Look for a section banner or header at the TOP of the page. It will say one of:
+   Sport, Business, Vibez!, AgriToday, News
+   If you see it clearly, use that exact value.
+
+   STEP 2: If no banner is visible, classify by reading the content:
+   - "Business"  → tender notices, financial reports, company news, economy, tax, accounting, markets, tenders
+   - "Sport"     → match results, sports fixtures, athletes, league tables, player news
+   - "Vibez!"    → entertainment, celebrities, music, fashion, movies, arts, lifestyle
+   - "AgriToday" → farming, livestock, crops, agriculture, rural development, irrigation
+   - "News"      → everything else: politics, government, crime, courts, health, education
+
+   CRITICAL: Tender notices and financial pages MUST be classified as "Business" — not "News".
+
+3. HEADLINE — copy the single largest, most prominent headline exactly.
+
+4. TAGS — exactly 5 short keywords describing the page content.
+
+Respond ONLY with valid JSON. No markdown, no explanation:
+{"page_number": 5, "section": "Business", "headline": "New tender for road construction", "tags": ["tender","roads","construction","namibia","government"]}"""
+
+
+# ── Gemini fallback client ────────────────────────────────────────────────────
+
 _gemini_client = None
 
 
 def configure_gemini(api_key: str | None = None) -> None:
-    """
-    Configure vision analysis clients.
-    Primary: OpenRouter (if key is set). Fallback: Google Gemini.
-    Gemini is always initialised so automatic fallback works when
-    the OpenRouter key expires or returns 401/403.
-    """
+    """Configure vision clients. Gemini is always prepared as a final fallback."""
     global _gemini_client
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if openrouter_key:
-        logger.info(
-            "Vision analysis will use OpenRouter/%s",
-            os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct"),
-        )
+    vision_model   = os.getenv("OPENROUTER_VISION_MODEL", "qwen/qwen2.5-vl-72b-instruct:free")
+    deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-chat-v3-0324:free")
 
-    # Always set up Gemini so it's ready as a fallback
+    if openrouter_key:
+        logger.info("Vision analysis: DeepSeek/%s (text) + %s (image)", deepseek_model, vision_model)
+
     key = api_key or os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
         if not openrouter_key:
-            logger.warning("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set — vision analysis will fail")
+            logger.warning("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set")
         return
     try:
         from google import genai
         _gemini_client = genai.Client(api_key=key)
-        logger.info("Gemini client ready (%s)", "primary" if not openrouter_key else "fallback")
+        logger.info("Gemini client ready (fallback)")
     except Exception as exc:
         logger.warning("Failed to create Gemini client: %s", exc)
 
 
-def analyze_page(image_path: str, retries: int = 2) -> dict:
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def analyze_page(image_path: str, retries: int = 2, extracted_text: str = "") -> dict:
     """
-    Analyze a newspaper page image.
-    Primary: OpenRouter vision model.
-    Fallback: Google Gemini — used automatically if:
-      - No OpenRouter key is configured, OR
-      - OpenRouter returns a 401/403 (invalid/expired key)
+    Analyze a newspaper page.
+    - If `extracted_text` is provided (digital PDF): use DeepSeek text classification.
+    - Otherwise: send the image to Qwen VL 72B vision.
+    - Final fallback: Google Gemini.
     """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
     if openrouter_key:
+        # Path A: We have real text — use DeepSeek for smart classification
+        if extracted_text and len(extracted_text.strip()) > 50:
+            try:
+                return _classify_with_deepseek(extracted_text, image_path, openrouter_key, retries)
+            except Exception as exc:
+                logger.warning("DeepSeek text classification failed (%s) — falling back to vision", exc)
+
+        # Path B: Scanned/image page — use Qwen VL 72B vision
         try:
-            return _analyze_with_openrouter(image_path, openrouter_key, retries)
+            return _analyze_with_vision(image_path, openrouter_key, retries)
         except RuntimeError as exc:
             err_str = str(exc)
-            # Auto-fallback to Gemini when the OpenRouter key is invalid/expired
             if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
-                logger.warning(
-                    "OpenRouter key invalid/expired (401/403) — falling back to Gemini for %s",
-                    image_path,
-                )
+                logger.warning("OpenRouter key invalid (401/403) — falling back to Gemini for %s", image_path)
                 return _analyze_with_gemini(image_path, retries)
             raise
 
     return _analyze_with_gemini(image_path, retries)
 
 
-# ── OpenRouter vision analysis ──────────────────────────────────────────────
+# ── DeepSeek text classification ─────────────────────────────────────────────
 
-def _analyze_with_openrouter(image_path: str, api_key: str, retries: int) -> dict:
-    """Send the page image to OpenRouter vision model and parse the JSON response."""
-    model = os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct")
+def _classify_with_deepseek(text: str, image_path: str, api_key: str, retries: int) -> dict:
+    """
+    Use DeepSeek (fast text model) to classify a page from its extracted text.
+    This is far more accurate than keyword matching and faster than vision models.
+    """
+    model = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-chat-v3-0324:free")
 
-    # Load image, compress aggressively — AI only needs to read headlines/keywords
+    # Truncate to first 2000 chars — section info is always at the top
+    truncated_text = text.strip()[:2000]
+    prompt = TEXT_CLASSIFICATION_PROMPT.format(text=truncated_text)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type":  "application/json",
+        "HTTP-Referer":  "https://newera-editorial.app",
+        "X-Title":       "NewEra Editorial Classifier",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,  # Deterministic — classification should not be creative
+        "max_tokens": 200,
+    }
+
+    logger.info("Classifying page via DeepSeek/%s (text mode)", model)
+    last_error = None
+
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers, json=payload, timeout=30,
+            )
+            resp.raise_for_status()
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            m   = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                raw = m.group(0)
+
+            data   = json.loads(raw)
+            result = _validate_and_normalise(data, image_path)
+            logger.info("DeepSeek classified → section=%s", result["section"])
+            return result
+
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            logger.warning("DeepSeek non-JSON (attempt %d): %s", attempt + 1, exc)
+            if attempt < retries - 1:
+                time.sleep(0.5)
+        except Exception as exc:
+            last_error = exc
+            logger.error("DeepSeek error (attempt %d): %s", attempt + 1, exc)
+            if attempt < retries - 1:
+                time.sleep(1)
+
+    raise RuntimeError(f"DeepSeek classification failed after {retries} attempts: {last_error}")
+
+
+# ── Qwen VL 72B vision analysis ───────────────────────────────────────────────
+
+def _analyze_with_vision(image_path: str, api_key: str, retries: int) -> dict:
+    """
+    Send the page image to a vision model (default: Qwen VL 72B).
+    Images are prepared at higher quality so the model can actually read the text.
+    """
+    model = os.getenv("OPENROUTER_VISION_MODEL", "qwen/qwen2.5-vl-72b-instruct:free")
+
+    # Prepare image — higher quality than before so text is readable
     img = Image.open(image_path)
-    if img.mode in ("P", "RGBA"):
+    if img.mode in ("P", "RGBA", "L"):
         img = img.convert("RGB")
 
-    # Shrink large images to max 800px — keeps base64 payload small and API fast
-    MAX_DIM = 800
+    # Use 1400px max — enough to read newspaper text clearly
+    MAX_DIM = 1400
     if max(img.size) > MAX_DIM:
-        img.thumbnail((MAX_DIM, MAX_DIM))
+        img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
 
     buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=40, optimize=True)
+    img.save(buf, "JPEG", quality=72, optimize=True)
     image_bytes = buf.getvalue()
+    image_b64   = base64.b64encode(image_bytes).decode("utf-8")
+    data_url    = f"data:image/jpeg;base64,{image_b64}"
 
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    data_url  = f"data:image/jpeg;base64,{image_b64}"
+    logger.info("Sending image to %s (%d KB)", model, len(image_bytes) // 1024)
 
-    logger.info("Sending page to OpenRouter/%s (%d KB)", model, len(image_bytes) // 1024)
-
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type":  "application/json",
+        "HTTP-Referer":  "https://newera-editorial.app",
+        "X-Title":       "NewEra Editorial Vision",
+    }
     payload = {
         "model": model,
         "messages": [
@@ -181,70 +267,58 @@ def _analyze_with_openrouter(image_path: str, api_key: str, retries: int) -> dic
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": data_url}},
-                    {"type": "text", "text": ANALYSIS_PROMPT},
+                    {"type": "text",      "text": VISION_PROMPT},
                 ],
             }
         ],
-        "temperature": 0.1,
-        "max_tokens": 300,
+        "temperature": 0.0,
+        "max_tokens":  300,
     }
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://newera-editorial.app",
-        "X-Title": "NewEra Editorial Vision",
-    }
-
-    last_error: Exception | None = None
+    last_error = None
     for attempt in range(retries):
         try:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=120,
+                headers=headers, json=payload, timeout=120,
             )
             resp.raise_for_status()
-            raw_text = resp.json()["choices"][0]["message"]["content"].strip()
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
 
-            if not raw_text:
-                raise ValueError("Empty response from OpenRouter")
+            if not raw:
+                raise ValueError("Empty response from vision model")
 
-            # Strip markdown fences if present
-            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-            raw_text = re.sub(r"\s*```$", "", raw_text)
-            json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-            if json_match:
-                raw_text = json_match.group(0)
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            m   = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                raw = m.group(0)
 
-            data   = json.loads(raw_text)
+            data   = json.loads(raw)
             result = _validate_and_normalise(data, image_path)
-            logger.info("Vision analysis succeeded with OpenRouter/%s (attempt %d)", model, attempt + 1)
+            logger.info("Vision (%s) → section=%s (attempt %d)", model, result["section"], attempt + 1)
             return result
 
         except json.JSONDecodeError as exc:
             last_error = exc
-            logger.warning("Non-JSON from OpenRouter attempt %d: %s", attempt + 1, exc)
+            logger.warning("Non-JSON from vision model (attempt %d): %s", attempt + 1, exc)
             if attempt < retries - 1:
                 time.sleep(1)
         except Exception as exc:
             last_error = exc
-            logger.error("OpenRouter vision error attempt %d: %s", attempt + 1, exc)
+            logger.error("Vision model error (attempt %d): %s", attempt + 1, exc)
             if attempt < retries - 1:
                 time.sleep(1)
 
-    raise RuntimeError(f"OpenRouter vision analysis failed after {retries} attempts. Last error: {last_error}")
+    raise RuntimeError(f"Vision analysis failed after {retries} attempts: {last_error}")
 
 
-# ── Gemini fallback ─────────────────────────────────────────────────────────
+# ── Google Gemini final fallback ──────────────────────────────────────────────
 
 def _analyze_with_gemini(image_path: str, retries: int) -> dict:
-    """Fallback: analyze using Google Gemini when OpenRouter key is not set."""
+    """Final fallback using Google Gemini when OpenRouter is unavailable."""
     if _gemini_client is None:
-        raise RuntimeError(
-            "No vision model configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY in .env"
-        )
+        raise RuntimeError("No vision model configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY in .env")
 
     from google.genai import types
 
@@ -254,40 +328,39 @@ def _analyze_with_gemini(image_path: str, retries: int) -> dict:
     mime_type = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
     if mime_type == "image/png":
         img = Image.open(io.BytesIO(image_bytes))
-        if img.mode == "P":
+        if img.mode in ("P", "RGBA"):
             img = img.convert("RGB")
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=70, optimize=True)
-            image_bytes = buf.getvalue()
-            mime_type = "image/jpeg"
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=72)
+        image_bytes = buf.getvalue()
+        mime_type   = "image/jpeg"
 
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-    config      = types.GenerateContentConfig(temperature=0.1)
-
-    model_chain = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]
-    last_error: Exception | None = None
+    config     = types.GenerateContentConfig(temperature=0.0)
+    model_chain = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    last_error  = None
 
     for model_name in model_chain:
         for attempt in range(retries):
             try:
                 response = _gemini_client.models.generate_content(
                     model=model_name,
-                    contents=[image_part, ANALYSIS_PROMPT],
+                    contents=[image_part, VISION_PROMPT],
                     config=config,
                 )
-                raw_text = (response.text or "").strip()
-                if not raw_text:
-                    raise ValueError("Empty response from Gemini")
+                raw = (response.text or "").strip()
+                if not raw:
+                    raise ValueError("Empty Gemini response")
 
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-                json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-                if json_match:
-                    raw_text = json_match.group(0)
+                raw = re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = re.sub(r"\s*```$", "", raw)
+                m   = re.search(r"\{.*\}", raw, re.DOTALL)
+                if m:
+                    raw = m.group(0)
 
-                data   = json.loads(raw_text)
+                data   = json.loads(raw)
                 result = _validate_and_normalise(data, image_path)
-                logger.info("Gemini fallback succeeded with %s (attempt %d)", model_name, attempt + 1)
+                logger.info("Gemini fallback (%s) → section=%s", model_name, result["section"])
                 return result
 
             except json.JSONDecodeError as exc:
@@ -296,8 +369,7 @@ def _analyze_with_gemini(image_path: str, retries: int) -> dict:
                     time.sleep(0.5)
             except Exception as exc:
                 last_error = exc
-                err_str = str(exc)
-                is_quota = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+                is_quota = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
                 logger.error("Gemini %s attempt %d: %s", model_name, attempt + 1, exc)
                 if is_quota:
                     break
@@ -307,21 +379,21 @@ def _analyze_with_gemini(image_path: str, retries: int) -> dict:
     raise RuntimeError(f"All Gemini models exhausted. Last error: {last_error}")
 
 
-# ── Shared helpers ───────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_section(raw: str) -> str:
     if raw in VALID_SECTIONS:
         return raw
-    return SECTION_ALIASES.get(raw.strip().lower(), "Sport")
+    return SECTION_ALIASES.get(raw.strip().lower(), "News")
 
 
 def _validate_and_normalise(data: dict, image_path: str) -> dict:
-    page_number_raw = data.get("page_number", 0)
-    if page_number_raw in ("unknown", None):
+    raw_num = data.get("page_number", 0)
+    if raw_num in ("unknown", None, ""):
         page_number = 0
     else:
         try:
-            page_number = int(page_number_raw)
+            page_number = int(raw_num)
         except (TypeError, ValueError):
             page_number = 0
 
@@ -334,7 +406,7 @@ def _validate_and_normalise(data: dict, image_path: str) -> dict:
 
     return {
         "page_number": page_number,
-        "section": section,
-        "tags": tags,
-        "headline": headline,
+        "section":     section,
+        "tags":        tags,
+        "headline":    headline,
     }

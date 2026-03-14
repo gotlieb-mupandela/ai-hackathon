@@ -43,6 +43,7 @@ from whatsapp import (
 
 # PDF-to-image conversion
 from pdf2image import convert_from_path
+from PIL import Image
 
 POPPLER_PATH = r"C:\poppler\poppler-24.08.0\Library\bin"
 
@@ -229,26 +230,74 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
     """
     Synchronous worker for a single page — run inside a ThreadPoolExecutor.
 
-    Strategy:
-      1. Try PDF text extraction (instant, ~5ms) to find section keyword.
-      2. Fall back to AI vision only when text extraction returns nothing
-         (image-based PDFs, or pages without a section header in the text layer).
+    Classification strategy:
+      1. Extract embedded text from PDF (instant, ~5ms).
+         - If meaningful text found → send to DeepSeek for AI-powered classification.
+           DeepSeek reads the actual content and reasons about the section accurately.
+         - If no text (scanned page) → convert to high-quality image + Qwen VL 72B vision.
+      2. Google Gemini as final fallback.
     """
-    section = _extract_section_from_pdf_bytes(pdf_bytes)
     page_number = _extract_page_number_from_pdf_bytes(pdf_bytes)
 
-    if section:
-        logger.info("Text-extracted [%s] p%s — %s", section, page_number or "?", filename)
-        return {
-            "filename": filename,
-            "page_number": page_number,
-            "section": section,
-            "headline": "",
-            "tags": [],
-            "method": "text",
-        }
+    # Always extract the full raw text — pass it to DeepSeek even if keyword matching misses it
+    extracted_text = ""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        if reader.pages:
+            extracted_text = (reader.pages[0].extract_text() or "").strip()
+    except Exception:
+        pass
 
-    # Text extraction found nothing — convert to image and use AI vision
+    has_real_text = len(extracted_text) > 50  # Scanned PDFs give <50 chars (just metadata)
+
+    if has_real_text:
+        # Path A: Digital PDF — let DeepSeek read and reason about the text
+        logger.info("Text available (%d chars) — using DeepSeek for %s", len(extracted_text), filename)
+        tmp_pdf_path = None
+        tmp_img_path = None
+        try:
+            # Still need an image for page_number if not found in text
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+                tmp_pdf.write(pdf_bytes)
+                tmp_pdf_path = tmp_pdf.name
+
+            images = convert_from_path(
+                tmp_pdf_path, dpi=120, first_page=1, last_page=1,
+                poppler_path=POPPLER_PATH, thread_count=2,
+            )
+            img = images[0] if images else None
+            if img:
+                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+                    img.save(tmp_img, "JPEG", quality=72, optimize=True)
+                    tmp_img.flush()
+                    os.fsync(tmp_img.fileno())
+                    tmp_img_path = tmp_img.name
+
+            result = analyze_page(
+                tmp_img_path or "",
+                retries=2,
+                extracted_text=extracted_text,
+            )
+            if not page_number and result.get("page_number"):
+                page_number = result["page_number"]
+            result["filename"]    = filename
+            result["page_number"] = page_number or result.get("page_number", 0)
+            result["method"]      = "deepseek"
+            logger.info("DeepSeek classified [%s] p%s — %s", result["section"], page_number or "?", filename)
+            return result
+
+        except Exception as exc:
+            logger.warning("DeepSeek path failed for %s (%s) — falling back to vision", filename, exc)
+        finally:
+            for p in (tmp_pdf_path, tmp_img_path):
+                if p:
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    # Path B: Scanned/image PDF — convert to high-quality image for Qwen VL 72B
     tmp_pdf_path = None
     tmp_img_path = None
     try:
@@ -256,44 +305,43 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
             tmp_pdf.write(pdf_bytes)
             tmp_pdf_path = tmp_pdf.name
 
+        # Higher DPI so text in the image is legible for the vision model
         images = convert_from_path(
-            tmp_pdf_path, dpi=100, first_page=1, last_page=1,
-            poppler_path=POPPLER_PATH,
-            thread_count=2,
+            tmp_pdf_path, dpi=150, first_page=1, last_page=1,
+            poppler_path=POPPLER_PATH, thread_count=2,
         )
         if not images:
             raise ValueError("Could not convert PDF to image")
 
         img = images[0]
-        MAX_DIM = 900
+        # Keep up to 1400px — Qwen VL 72B needs to read the text clearly
+        MAX_DIM = 1400
         if max(img.size) > MAX_DIM:
-            img.thumbnail((MAX_DIM, MAX_DIM))
+            img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-            img.save(tmp_img, "JPEG", quality=45, optimize=True)
+            img.save(tmp_img, "JPEG", quality=72, optimize=True)
             tmp_img.flush()
             os.fsync(tmp_img.fileno())
             tmp_img_path = tmp_img.name
 
-        result = analyze_page(tmp_img_path)
-        result["filename"] = filename
-        result["method"] = "vision"
-        logger.info(
-            "Vision-analyzed [%s] p%s — %s",
-            result.get("section"), result.get("page_number"), filename,
-        )
+        result = analyze_page(tmp_img_path, retries=2, extracted_text="")
+        result["filename"]    = filename
+        result["page_number"] = page_number or result.get("page_number", 0)
+        result["method"]      = "vision"
+        logger.info("Vision classified [%s] p%s — %s", result["section"], page_number or "?", filename)
         return result
 
     except Exception as exc:
         logger.error("_process_one_page_sync failed for %s: %s", filename, exc)
         return {
-            "filename": filename,
+            "filename":    filename,
             "page_number": page_number,
-            "section": "News",
-            "headline": "",
-            "tags": [],
-            "method": "error",
-            "error": str(exc),
+            "section":     "News",
+            "headline":    "",
+            "tags":        [],
+            "method":      "error",
+            "error":       str(exc),
         }
     finally:
         for p in (tmp_pdf_path, tmp_img_path):
