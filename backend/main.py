@@ -349,7 +349,7 @@ async def agent_query(body: AgentQuery):
             options={"temperature": 0.7},
         )
 
-        answer_text = response["message"]["content"].strip()
+        answer_text = response.message.content.strip()
         logger.info("Agent query (Ollama/%s): %s", ollama_model, body.query[:100])
 
         return {
@@ -363,11 +363,20 @@ async def agent_query(body: AgentQuery):
             },
         }
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Agent query failed: %s", exc)
+        err = str(exc)
+        # Give a clear message if Ollama isn't running
+        if "connection" in err.lower() or "refused" in err.lower() or "connect" in err.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Ollama is not running. Start it with: ollama serve"
+            )
         raise HTTPException(
             status_code=500,
-            detail=f"Agent analysis failed: {str(exc)}"
+            detail=f"Agent analysis failed: {err}"
         )
 
 
