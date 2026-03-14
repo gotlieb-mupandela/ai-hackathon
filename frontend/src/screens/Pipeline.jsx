@@ -95,10 +95,8 @@ export default function Pipeline() {
   const todayStr = getTodayStr();
 
   useEffect(() => {
-    // Load page count on mount
     getPages(todayStr).then(pages => {
-      const analysed = pages.filter(p => p.status === 'analysed');
-      setPageCount(analysed.length);
+      setPageCount(pages.length);
     }).catch(() => {});
   }, [todayStr]);
 
@@ -114,7 +112,7 @@ export default function Pipeline() {
         ]);
         if (edition?.status === 'published') return;
 
-        const analysedCount = allPages.filter(p => p.status === 'analysed').length;
+        const totalPages = allPages.length;
         const expectedNum = edition?.expected_pages != null ? Number(edition.expected_pages) : 0;
 
         const deadlineStr = edition?.deadline || '15:00';
@@ -123,7 +121,7 @@ export default function Pipeline() {
         deadlineToday.setHours(h, m || 0, 0, 0);
         const isPastDeadline = Date.now() >= deadlineToday.getTime();
 
-        const allPagesReady = expectedNum > 0 && analysedCount >= expectedNum;
+        const allPagesReady = expectedNum > 0 && totalPages >= expectedNum;
         if (allPagesReady || isPastDeadline) {
           autoRunTriggeredRef.current = true;
           addLog('Auto-running pipeline (all pages ready or deadline reached)...');
@@ -282,17 +280,16 @@ export default function Pipeline() {
       updateStep(1, 'running');
       addLog('Fetching analysed pages from Supabase...');
 
-      const allPages = await getPages(todayStr);
-      const pages = allPages.filter(p => p.status === 'analysed');
+      const pages = await getPages(todayStr);
 
       if (pages.length === 0) {
-        addLog('[ERROR] No analysed pages found. Upload and analyse pages first.');
+        addLog('[ERROR] No pages found. Upload PDF pages first.');
         updateStep(1, 'error');
         setIsRunning(false);
         return;
       }
 
-      addLog(`Found ${pages.length} analysed pages`);
+      addLog(`Found ${pages.length} pages`);
       updateStep(1, 'done', Date.now() - start);
 
       // Step 2: Sort by page number (with secondary sort for stability)
