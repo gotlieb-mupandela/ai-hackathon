@@ -167,7 +167,7 @@ export default function Sidebar() {
         )}
       </ul>
       <div className="sidebar-footer">
-        <div className="sidebar-footer-logo">Apnium Technology</div>
+        <div className="sidebar-footer-logo">New Era</div>
         <div className="sidebar-footer-sub">Windhoek, Namibia</div>
       </div>
     </nav>
