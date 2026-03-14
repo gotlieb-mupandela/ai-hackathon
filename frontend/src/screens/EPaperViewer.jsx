@@ -14,40 +14,68 @@ const CATEGORIES = [
   { key: 'solzi',      label: 'NewEra Solzi' },
 ];
 
+// Maps storage key → display label
+const KEY_LABEL_MAP = {
+  full_paper: 'Full Paper',
+  news:       'NewEra News',
+  sport:      'NewEra Sport',
+  business:   'NewEra Business',
+  vibez:      'NewEra Vibez!',
+  agritoday:  'NewEra AgriToday',
+  solzi:      'NewEra Solzi',
+};
+
+// Maps storage key → sections map key (as saved by pipeline)
+const KEY_SECTION_MAP = {
+  news:      'News',
+  sport:     'Sport',
+  business:  'Business',
+  vibez:     'Vibez!',
+  agritoday: 'AgriToday',
+  solzi:     'Solzi',
+};
+
 function buildEditionCards(editions) {
   const cards = [];
   for (const edition of editions) {
     const paths = edition.storage_paths || edition.outputs;
     if (!paths) continue;
+
+    // Always use the full_paper as the cover thumbnail for every card
+    const fullPaperUrl = paths.full_paper
+      ? getStorageUrl('outputs', paths.full_paper)
+      : null;
+
     for (const [key, path] of Object.entries(paths)) {
       if (!path) continue;
       const filename = path.split('/').pop();
+
+      // Determine page count
+      let pageCount = '—';
+      if (key === 'full_paper') {
+        pageCount = edition.expected_pages || '—';
+      } else {
+        const sectionKey = KEY_SECTION_MAP[key];
+        const sectionPages = sectionKey && edition.sections?.[sectionKey];
+        pageCount = Array.isArray(sectionPages) ? sectionPages.length : '—';
+      }
+
       cards.push({
         date: edition.date,
         category: key,
+        label: KEY_LABEL_MAP[key] || key,
         filename,
         path,
         publishedAt: edition.published_at,
-        pageCount: key === 'full_paper'
-          ? edition.expected_pages
-          : (edition.sections?.[capitaliseKey(key)]?.length || '—'),
+        pageCount,
+        // thumbnailUrl always shows cover (page 1 of full newspaper)
+        thumbnailUrl: fullPaperUrl || getStorageUrl('outputs', path),
+        // url is the actual PDF opened in the viewer
         url: getStorageUrl('outputs', path),
       });
     }
   }
   return cards;
-}
-
-function capitaliseKey(key) {
-  const map = {
-    news: 'News',
-    sport: 'Sport',
-    business: 'Business',
-    vibez: 'Vibez',
-    agritoday: 'AgriToday',
-    full_paper: 'Full Paper',
-  };
-  return map[key] || key;
 }
 
 export default function EPaperViewer() {
@@ -143,7 +171,8 @@ export default function EPaperViewer() {
               onClick={() => setSelectedCard(card)}
             >
               <div className="edition-card-preview">
-                <PdfThumbnail url={card.url} width={240} />
+                {/* Always show cover (page 1 of full newspaper) as thumbnail */}
+                <PdfThumbnail url={card.thumbnailUrl} width={240} />
                 <div className="edition-card-overlay">
                   <span className="overlay-btn">Read Edition</span>
                 </div>
@@ -169,7 +198,7 @@ export default function EPaperViewer() {
           <div className="pdf-modal" onClick={(e) => e.stopPropagation()}>
             <div className="pdf-modal-header">
               <div>
-                <div className="pdf-modal-title">{capitaliseKey(selectedCard.category)}</div>
+                <div className="pdf-modal-title">{selectedCard.label}</div>
                 <div className="pdf-modal-sub">{selectedCard.date} · {selectedCard.filename}</div>
               </div>
               <div className="pdf-modal-actions">
