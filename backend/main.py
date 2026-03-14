@@ -296,71 +296,70 @@ class AgentQuery(BaseModel):
 async def agent_query(body: AgentQuery):
     """
     Query the AI Agent with data-driven insights.
-    Agent analyzes company data and provides recommendations.
+    Runs fully offline using Ollama (llama3) — no internet or API key needed.
     """
     try:
-        from google import genai
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+        import ollama
 
-        # Build data context for the agent
         supabase = _create_supabase_client(
             os.getenv("SUPABASE_URL", ""),
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         )
 
-        # Fetch recent data for context
-        pages_data = supabase.from('pages').select('*').eq('edition_date', body.date).execute()
-        editions_data = supabase.from('editions').select('*').eq('date', body.date).execute()
+        # Fetch live company data for context
+        pages_data = supabase.from_('pages').select('*').eq('edition_date', body.date).execute()
+        editions_data = supabase.from_('editions').select('*').eq('date', body.date).execute()
 
         pages_count = len(pages_data.data) if pages_data.data else 0
-        sections = {}
+        sections: dict[str, int] = {}
         if pages_data.data:
             for page in pages_data.data:
-                section = page.get('section', 'Unknown')
-                sections[section] = sections.get(section, 0) + 1
+                sec = page.get('section', 'Unknown')
+                sections[sec] = sections.get(sec, 0) + 1
 
-        # Build system prompt for the agent
-        system_prompt = f"""You are an AI Agent trained on NewEra's editorial operations data. 
-Today's date: {body.date}
-Current context: {pages_count} pages uploaded across sections: {sections}
+        ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
+        ollama_host  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
-You have access to:
-- Page upload data (filenames, sections, status)
-- Edition information (deadline, expected pages, status)
-- Designer performance (upload counts)
-- Subscriber data (all sections subscribed to)
-- Historical patterns from the past 90 days
-
-Your role is to:
-1. Analyze patterns in editorial operations
-2. Provide data-driven recommendations
-3. Answer questions about performance, trends, and optimization
-4. Make informed decisions based on available data
-5. Help the admin team run operations more efficiently
-
-Keep responses concise, actionable, and data-focused.
-Always explain your reasoning based on available data."""
-
-        # Query the agent
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                f"System context:\n{system_prompt}\n\nUser query: {body.query}",
-            ],
-            config=genai.types.GenerateContentConfig(temperature=0.7),
+        system_prompt = (
+            f"You are an AI Agent trained on NewEra's editorial operations data.\n"
+            f"Today's date: {body.date}\n"
+            f"Pages uploaded today: {pages_count} across sections: {sections}\n\n"
+            "You have access to:\n"
+            "- Page upload data (filenames, sections, status)\n"
+            "- Edition information (deadline, expected pages, status)\n"
+            "- Designer performance (upload counts)\n"
+            "- Subscriber and subscription data\n"
+            "- Historical patterns from the past 90 days\n\n"
+            "Your role:\n"
+            "1. Analyse patterns in editorial operations\n"
+            "2. Provide data-driven recommendations\n"
+            "3. Answer questions about performance, trends, and optimisation\n"
+            "4. Help the admin team run operations more efficiently\n\n"
+            "Keep responses concise, actionable, and data-focused.\n"
+            "Always explain your reasoning."
         )
 
-        answer_text = (response.text or "").strip()
+        client = ollama.Client(host=ollama_host)
+        response = client.chat(
+            model=ollama_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": body.query},
+            ],
+            options={"temperature": 0.7},
+        )
 
-        logger.info("Agent query: %s", body.query[:100])
+        answer_text = response["message"]["content"].strip()
+        logger.info("Agent query (Ollama/%s): %s", ollama_model, body.query[:100])
 
         return {
             "answer": answer_text,
-            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections",
+            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections (offline · {ollama_model})",
             "data": {
                 "pages_uploaded": pages_count,
                 "sections": sections,
                 "query_date": body.date,
+                "model": ollama_model,
             },
         }
 
