@@ -71,28 +71,33 @@ async def analyze_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
     try:
-        # Save PDF to temp file
         content = await file.read()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
             tmp_pdf.write(content)
             tmp_pdf_path = tmp_pdf.name
 
-        # Convert PDF to high-quality JPG image (like taking a photo of the page)
+        # Fast conversion: 150 DPI is enough for Gemini to read text
         images = convert_from_path(
-            tmp_pdf_path, dpi=200, first_page=1, last_page=1,
+            tmp_pdf_path, dpi=150, first_page=1, last_page=1,
             poppler_path=POPPLER_PATH,
+            thread_count=4,
         )
         if not images:
             raise ValueError("Could not convert PDF to image")
 
-        # Save as high-quality JPEG for Gemini (flush so it's readable immediately)
+        img = images[0]
+
+        # Downscale large images — Gemini only needs ~1200px wide to read text
+        MAX_DIM = 1400
+        if max(img.size) > MAX_DIM:
+            img.thumbnail((MAX_DIM, MAX_DIM))
+
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-            images[0].save(tmp_img, "JPEG", quality=95)
+            img.save(tmp_img, "JPEG", quality=70, optimize=True)
             tmp_img.flush()
             os.fsync(tmp_img.fileno())
             tmp_img_path = tmp_img.name
 
-        # Analyze with Gemini
         result = analyze_page(tmp_img_path)
 
         # Cleanup temp files

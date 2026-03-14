@@ -82,78 +82,80 @@ export default function Upload() {
     return () => clearInterval(pollRef.current);
   }, [fetchPages]);
 
-  const onDrop = useCallback(
-    async (acceptedFiles) => {
-      for (const file of acceptedFiles) {
-        if (!file.name.toLowerCase().endsWith('.pdf')) {
-          showToast(`${file.name} is not a PDF — skipped`, 'error');
-          continue;
-        }
+  const processOneFile = useCallback(
+    async (file) => {
+      setUploadingFiles((prev) => ({ ...prev, [file.name]: 'uploading' }));
+      try {
+        const storagePath = `${todayStr}/${file.name}`;
+        await uploadToStorage('Upload', storagePath, file);
 
-        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'uploading' }));
+        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'saved' }));
+        const pageRecord = await insertPage({
+          edition_date: todayStr,
+          filename: file.name,
+          storage_path: storagePath,
+          status: 'uploaded',
+          uploaded_by: user?.email || 'unknown',
+        });
 
+        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
         try {
-          // 1. Upload to Supabase Storage
-          const storagePath = `${todayStr}/${file.name}`;
-          await uploadToStorage('Upload', storagePath, file);
-
-          // 2. Insert page record in Supabase
-          setUploadingFiles((prev) => ({ ...prev, [file.name]: 'saved' }));
-          const pageRecord = await insertPage({
-            edition_date: todayStr,
-            filename: file.name,
-            storage_path: storagePath,
-            status: 'uploaded',
-            uploaded_by: user?.email || 'unknown',
+          const analysis = await analyzePage(file);
+          await updatePage(pageRecord.id, {
+            page_number: analysis.page_number,
+            section: analysis.section,
+            headline: analysis.headline,
+            tags: analysis.tags,
+            status: 'analysed',
           });
-
-          // 3. Analyze with Python backend (Gemini)
-          setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
-          try {
-            const analysis = await analyzePage(file);
-            await updatePage(pageRecord.id, {
-              page_number: analysis.page_number,
-              section: analysis.section,
-              headline: analysis.headline,
-              tags: analysis.tags,
-              status: 'analysed',
-            });
-            showToast(`${file.name} uploaded & analysed ✓`, 'success');
-          } catch (analyzeErr) {
-            console.error('Analysis failed:', analyzeErr);
-            await updatePage(pageRecord.id, { status: 'error' });
-            
-            // Provide clear feedback about backend connectivity
-            const isNetworkError = analyzeErr.code === 'ERR_NETWORK' || 
-                                   analyzeErr.message?.includes('Network Error') ||
-                                   analyzeErr.message?.includes('ECONNREFUSED');
-            
-            if (isNetworkError) {
-              showToast(`${file.name} uploaded but analysis failed. Is the backend running at http://localhost:8000?`, 'error');
-            } else {
-              showToast(`${file.name} uploaded but analysis failed: ${analyzeErr.message}`, 'error');
-            }
+          showToast(`${file.name} analysed ✓`, 'success');
+        } catch (analyzeErr) {
+          console.error('Analysis failed:', analyzeErr);
+          await updatePage(pageRecord.id, { status: 'error' });
+          const isNetworkError = analyzeErr.code === 'ERR_NETWORK' ||
+            analyzeErr.message?.includes('Network Error') ||
+            analyzeErr.message?.includes('ECONNREFUSED');
+          if (isNetworkError) {
+            showToast(`${file.name} uploaded but analysis failed — is backend running?`, 'error');
+          } else {
+            showToast(`${file.name} analysis failed: ${analyzeErr.message}`, 'error');
           }
-
-          setUploadingFiles((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          fetchPages();
-        } catch (err) {
-          setUploadingFiles((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          const detail = err.message || 'Unknown error';
-          console.error(`Upload failed for ${file.name}:`, detail, err);
-          showToast(`Failed to upload ${file.name}: ${detail}`, 'error');
         }
+
+        setUploadingFiles((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
+      } catch (err) {
+        setUploadingFiles((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
+        showToast(`Failed to upload ${file.name}: ${err.message || 'Unknown error'}`, 'error');
       }
     },
-    [fetchPages, todayStr, user]
+    [todayStr, user]
+  );
+
+  const onDrop = useCallback(
+    async (acceptedFiles) => {
+      const pdfFiles = acceptedFiles.filter((f) => {
+        if (!f.name.toLowerCase().endsWith('.pdf')) {
+          showToast(`${f.name} is not a PDF — skipped`, 'error');
+          return false;
+        }
+        return true;
+      });
+
+      if (pdfFiles.length === 0) return;
+
+      // Process ALL files in parallel for maximum speed
+      await Promise.all(pdfFiles.map((file) => processOneFile(file)));
+      fetchPages();
+    },
+    [fetchPages, processOneFile]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -178,17 +180,15 @@ export default function Upload() {
     }
   };
 
-  // Force Gemini to re-analyze every uploaded page
   const handleReanalyzeAll = async () => {
     if (reanalyzing || pages.length === 0) return;
     setReanalyzing(true);
-    showToast(`Re-analyzing ${pages.length} pages with Gemini…`, 'info');
-    let done = 0;
-    let failed = 0;
-    for (const page of pages) {
-      try {
+    showToast(`Re-analyzing ${pages.length} pages in parallel…`, 'info');
+
+    const { downloadFromStorage } = await import('../api');
+    const results = await Promise.allSettled(
+      pages.map(async (page) => {
         await updatePage(page.id, { status: 'analysing' });
-        const { downloadFromStorage } = await import('../api');
         const blob = await downloadFromStorage('Upload', page.storage_path);
         const file = new File([blob], page.filename, { type: 'application/pdf' });
         const analysis = await analyzePage(file);
@@ -199,18 +199,25 @@ export default function Upload() {
           tags: analysis.tags,
           status: 'analysed',
         });
-        done++;
-      } catch {
-        await updatePage(page.id, { status: 'error' });
-        failed++;
+      })
+    );
+
+    const done = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.filter((r) => r.status === 'rejected').length;
+
+    // Mark failed pages
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === 'rejected') {
+        await updatePage(pages[i].id, { status: 'error' }).catch(() => {});
       }
     }
+
     setReanalyzing(false);
     fetchPages();
     if (failed > 0) {
       showToast(`Done: ${done} analysed, ${failed} failed. Is the backend running?`, 'error');
     } else {
-      showToast(`All ${done} pages re-analyzed by Gemini`, 'success');
+      showToast(`All ${done} pages re-analyzed in parallel`, 'success');
     }
   };
 

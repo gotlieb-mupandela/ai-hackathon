@@ -103,48 +103,39 @@ def configure_gemini(api_key: str | None = None) -> None:
         _client = None
 
 
-def analyze_page(image_path: str, retries: int = 3) -> dict:
+def analyze_page(image_path: str, retries: int = 2) -> dict:
     """
-    Analyze a newspaper page image using Gemini 2.0 Flash.
-
-    Args:
-        image_path: Path to the PNG image of the page.
-        retries: Number of retry attempts on API failure.
-
-    Returns:
-        Dict with page_number, section, tags, headline.
+    Analyze a newspaper page image using the fastest available Gemini model.
+    Optimised for speed: lite models first, 2 retries, minimal sleep.
     """
     if _client is None:
         raise RuntimeError("Gemini client not configured — set GEMINI_API_KEY in .env")
 
-    # Load image and send as bytes so Gemini reliably receives it
     with open(image_path, "rb") as f:
         image_bytes = f.read()
-    
-    # Detect format from file extension (backend now sends JPG)
+
     mime_type = "image/jpeg" if image_path.lower().endswith(('.jpg', '.jpeg')) else "image/png"
-    
-    # If palette mode, convert to RGB for JPEG compatibility
+
     if mime_type == "image/png":
         image = Image.open(io.BytesIO(image_bytes))
         if image.mode == "P":
             image = image.convert("RGB")
             buf = io.BytesIO()
-            image.save(buf, "JPEG", quality=95)
+            image.save(buf, "JPEG", quality=70, optimize=True)
             image_bytes = buf.getvalue()
             mime_type = "image/jpeg"
 
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
     logger.info("Sending page image to Gemini (%d bytes, %s)", len(image_bytes), mime_type)
 
-    config = types.GenerateContentConfig(temperature=0.2)
+    config = types.GenerateContentConfig(temperature=0.1)
 
-    # Try models in order; each model has its own quota bucket
+    # Fastest models first — lite models respond in ~2-4s vs ~5-8s for full
     model_chain = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
         "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
     ]
     last_error: Exception | None = None
 
@@ -160,33 +151,31 @@ def analyze_page(image_path: str, retries: int = 3) -> dict:
                 if not raw_text:
                     raise ValueError("Empty response from Gemini")
 
-                # Strip markdown code fences if present
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
                 raw_text = re.sub(r"\s*```$", "", raw_text)
-                # Extract first {...} in case model adds extra text
                 json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
                 if json_match:
                     raw_text = json_match.group(0)
 
                 data = json.loads(raw_text)
                 result = _validate_and_normalise(data, image_path)
-                logger.info("Analysis succeeded with model %s", model_name)
+                logger.info("Analysis succeeded with model %s (attempt %d)", model_name, attempt + 1)
                 return result
 
             except json.JSONDecodeError as exc:
                 last_error = exc
                 logger.warning("Non-JSON from %s attempt %d: %s", model_name, attempt + 1, exc)
                 if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(0.5)
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
                 is_quota = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
                 logger.error("Error from %s attempt %d: %s", model_name, attempt + 1, exc)
                 if is_quota:
-                    break  # Skip remaining retries for this model, try next
+                    break
                 if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(0.5)
 
     err_msg = f"All Gemini models exhausted. Last error: {last_error}"
     logger.error(err_msg)

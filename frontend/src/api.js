@@ -12,7 +12,7 @@ const ANALYZER_URL = 'http://localhost:8000';
 
 const analyzer = axios.create({
   baseURL: ANALYZER_URL,
-  timeout: 120000, // 2 minutes for large PDFs
+  timeout: 30000, // 30s — optimised backend should respond in <15s
 });
 
 // ─── PDF Analysis (Python backend) ──────────────────────────

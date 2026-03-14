@@ -174,38 +174,43 @@ export default function Pipeline() {
         return;
       }
 
-      addLog(`Found ${allPagesToday.length} pages — analyzing every page with Gemini...`);
+      addLog(`Found ${allPagesToday.length} pages — analyzing ALL in parallel for speed...`);
+
+      // Process all pages in parallel — massive speed boost
+      const BATCH_SIZE = 5;
       let analysisSuccess = 0;
       let analysisFailed = 0;
 
-      for (const page of allPagesToday) {
-        try {
-          addLog(`  Analyzing ${page.filename}...`);
+      for (let i = 0; i < allPagesToday.length; i += BATCH_SIZE) {
+        const batch = allPagesToday.slice(i, i + BATCH_SIZE);
+        addLog(`  Batch ${Math.floor(i / BATCH_SIZE) + 1}: analyzing ${batch.length} pages simultaneously...`);
 
-          // Download the PDF from Storage
-          const blob = await downloadFromStorage('Upload', page.storage_path);
+        const results = await Promise.allSettled(
+          batch.map(async (page) => {
+            const blob = await downloadFromStorage('Upload', page.storage_path);
+            const file = new File([blob], page.filename, { type: 'application/pdf' });
+            const analysis = await analyzePage(file);
+            await updatePage(page.id, {
+              page_number: analysis.page_number,
+              section: analysis.section,
+              headline: analysis.headline,
+              tags: analysis.tags,
+              status: 'analysed',
+            });
+            return { page, analysis };
+          })
+        );
 
-          // Create a File object for the analyzer
-          const file = new File([blob], page.filename, { type: 'application/pdf' });
-
-          // Always call Gemini — never skip based on old status
-          const analysis = await analyzePage(file);
-
-          // Update the page with fresh analysis results
-          await updatePage(page.id, {
-            page_number: analysis.page_number,
-            section: analysis.section,
-            headline: analysis.headline,
-            tags: analysis.tags,
-            status: 'analysed',
-          });
-
-          addLog(`  ✓ ${page.filename} → p${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
-          analysisSuccess++;
-        } catch (err) {
-          addLog(`  [ERROR] Failed to analyze ${page.filename}: ${err.message}`);
-          analysisFailed++;
-        }
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') {
+            const { page, analysis } = r.value;
+            addLog(`  ✓ ${page.filename} → p${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
+            analysisSuccess++;
+          } else {
+            addLog(`  [ERROR] ${batch[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
+            analysisFailed++;
+          }
+        });
       }
 
       addLog(`Gemini analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
@@ -269,19 +274,26 @@ export default function Pipeline() {
       updateStep(3, 'running');
       addLog(`Downloading and merging ${sortedPages.length} PDFs...`);
 
-      const pdfBlobs = [];
-      for (const page of sortedPages) {
-        try {
-          const blob = await downloadFromStorage('Upload', page.storage_path);
-          pdfBlobs.push(blob);
-          addLog(`  Downloaded: ${page.filename}`);
-        } catch (err) {
-          addLog(`  [WARN] Could not download ${page.filename}: ${err.message}`);
-        }
-      }
+      // Download ALL PDFs in parallel
+      addLog(`  Downloading ${sortedPages.length} files in parallel...`);
+      const downloadResults = await Promise.allSettled(
+        sortedPages.map((page) => downloadFromStorage('Upload', page.storage_path))
+      );
 
-      const fullPaperBytes = await mergePdfs(pdfBlobs);
-      addLog(`Full paper merged: ${pdfBlobs.length} pages`);
+      const pdfBlobs = [];
+      downloadResults.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          pdfBlobs.push(result.value);
+        } else {
+          pdfBlobs.push(null);
+          addLog(`  [WARN] Could not download ${sortedPages[idx].filename}: ${result.reason?.message}`);
+        }
+      });
+      addLog(`  Downloaded ${pdfBlobs.filter(Boolean).length}/${sortedPages.length} files`);
+
+      const validBlobs = pdfBlobs.filter(Boolean);
+      const fullPaperBytes = await mergePdfs(validBlobs);
+      addLog(`Full paper merged: ${validBlobs.length} pages`);
       updateStep(3, 'done', Date.now() - start);
 
       // Step 4: Segment by category
@@ -315,22 +327,32 @@ export default function Pipeline() {
 
       const storagePaths = {};
 
-      // Upload full paper
+      // Build all upload tasks, then run them all in parallel
+      const uploadTasks = [];
+
       const fullPaperPath = `${todayStr}/full_paper.pdf`;
       const fullPaperBlob = new Blob([fullPaperBytes], { type: 'application/pdf' });
-      await uploadToStorage('outputs', fullPaperPath, fullPaperBlob);
-      storagePaths.full_paper = fullPaperPath;
-      addLog(`  Uploaded full_paper.pdf`);
+      uploadTasks.push(
+        uploadToStorage('outputs', fullPaperPath, fullPaperBlob).then(() => {
+          storagePaths.full_paper = fullPaperPath;
+          addLog(`  Uploaded full_paper.pdf`);
+        })
+      );
 
-      // Upload section PDFs
       for (const [section, { bytes, filename }] of Object.entries(sectionOutputs)) {
         const path = `${todayStr}/${filename}`;
         const blob = new Blob([bytes], { type: 'application/pdf' });
-        await uploadToStorage('outputs', path, blob);
         const key = section.toLowerCase().replace(/\s+/g, '_');
-        storagePaths[key] = path;
-        addLog(`  Uploaded ${filename}`);
+        uploadTasks.push(
+          uploadToStorage('outputs', path, blob).then(() => {
+            storagePaths[key] = path;
+            addLog(`  Uploaded ${filename}`);
+          })
+        );
       }
+
+      addLog(`  Uploading ${uploadTasks.length} files in parallel...`);
+      await Promise.all(uploadTasks);
       updateStep(5, 'done', Date.now() - start);
 
       // Step 6: Publish edition
