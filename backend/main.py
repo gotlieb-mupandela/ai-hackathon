@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -195,6 +195,70 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "NewEra PDF Analyzer"}
+
+
+@app.get("/auth/role")
+async def get_user_role(request: Request):
+    """
+    Return the role ('admin' | 'designer' | null) for the authenticated user.
+    Uses the service role key to bypass RLS so the check always works regardless
+    of Supabase table policies.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    token = auth_header.split(" ", 1)[1].strip()
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key  = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=500, detail="Server is missing Supabase credentials")
+
+    # Verify the token and extract the user's email via Supabase Auth
+    import requests as _req
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        user_resp = _req.get(
+            f"{supabase_url}/auth/v1/user",
+            headers={"Authorization": f"Bearer {token}", "apikey": service_key},
+            timeout=10,
+        )
+        if user_resp.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        email = user_resp.json().get("email", "").strip().lower()
+        if not email:
+            raise HTTPException(status_code=401, detail="Could not resolve user email")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Token verification failed: {exc}")
+
+    # Use service role key to query tables — bypasses RLS
+    svc_client = _create_supabase_client(supabase_url, service_key)
+
+    # Check admins table
+    admin_res = svc_client.from_("admins").select("email").eq("email", email).maybe_single().execute()
+    if admin_res.data:
+        logger.info("Role check: %s → admin", email)
+        return {"role": "admin"}
+
+    # Check designers table
+    designer_res = svc_client.from_("designers").select("email").eq("email", email).maybe_single().execute()
+    if designer_res.data:
+        logger.info("Role check: %s → designer", email)
+        return {"role": "designer"}
+
+    logger.warning("Role check: %s → no role found", email)
+    return {"role": None}
 
 
 @app.post("/analyze")

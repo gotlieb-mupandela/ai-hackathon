@@ -35,57 +35,42 @@ export function AuthProvider({ children }) {
   const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Detect user role based on admins and designers tables. Returns 'admin' | 'designer' | null.
-  const detectRole = async (userEmail) => {
-    const supabase = getSupabaseClient();
-    if (!supabase || !userEmail) {
+  /**
+   * Detect role by calling the backend /auth/role endpoint.
+   * The backend uses the Supabase service role key which bypasses RLS,
+   * ensuring the admins table is always readable regardless of RLS policies.
+   */
+  const detectRole = async (userEmail, accessToken) => {
+    if (!userEmail) {
+      setRole(null);
+      return null;
+    }
+
+    // Fall back to session token from Supabase if not explicitly passed
+    const token = accessToken || (await getSupabaseClient()?.auth.getSession())
+      ?.data?.session?.access_token;
+
+    if (!token) {
       setRole(null);
       return null;
     }
 
     try {
-      // Check if user is admin
-      const { data: adminData, error: adminError } = await supabase
-        .from('admins')
-        .select('email')
-        .eq('email', userEmail)
-        .maybeSingle();
+      const res = await fetch('http://localhost:8000/auth/role', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      if (!adminError && adminData) {
-        setRole('admin');
-        return 'admin';
+      if (!res.ok) {
+        console.warn('Role check failed:', res.status);
+        setRole(null);
+        return null;
       }
 
-      // Check if user is designer
-      const { data: designerData, error: designerError } = await supabase
-        .from('designers')
-        .select('email')
-        .eq('email', userEmail)
-        .maybeSingle();
-
-      if (!designerError && designerData) {
-        setRole('designer');
-        return 'designer';
-      }
-
-      // Not in either table: try to bootstrap as first admin
-      try {
-        const { count } = await supabase
-          .from('admins')
-          .select('*', { count: 'exact', head: true });
-
-        if (count === 0) {
-          await supabase.from('admins').insert({ email: userEmail.trim().toLowerCase() });
-          setRole('admin');
-          return 'admin';
-        }
-      } catch (err) {
-        console.warn('Bootstrap admin check failed:', err);
-      }
-      setRole(null);
-      return null;
+      const { role: detectedRole } = await res.json();
+      setRole(detectedRole || null);
+      return detectedRole || null;
     } catch (err) {
-      console.error('Error detecting role:', err);
+      console.error('Error detecting role from backend:', err);
       setRole(null);
       return null;
     }
@@ -189,12 +174,12 @@ export function AuthProvider({ children }) {
     if (error) throw error;
     let roleResult = null;
     if (data.user && data.session) {
-      // Ensure the client uses this session for the next request (RLS needs the JWT).
       await supabase.auth.setSession({
         access_token: data.session.access_token,
         refresh_token: data.session.refresh_token,
       });
-      roleResult = await detectRole(data.user.email);
+      // Pass the fresh access token so detectRole can authenticate with the backend
+      roleResult = await detectRole(data.user.email, data.session.access_token);
     }
     return { ...data, role: roleResult };
   };
