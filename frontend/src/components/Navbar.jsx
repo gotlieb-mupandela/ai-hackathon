@@ -1,9 +1,10 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Navbar.css';
 
 export default function Navbar() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isAdmin } = useAuth();
 
   return (
     <header className="navbar">
@@ -24,6 +25,11 @@ export default function Navbar() {
           <span className="navbar-user" title={user.email}>
             {user.email}
           </span>
+        )}
+        {isAdmin && (
+          <Link to="/agent" className="navbar-agent-link" title="AI Agent">
+            🤖 Agent
+          </Link>
         )}
         <div className="navbar-logo">
           <div className="navbar-logo-sun">

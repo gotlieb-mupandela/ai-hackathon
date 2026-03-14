@@ -269,3 +269,14 @@ export const getOrCreateTodayEdition = async (todayStr) => {
 
   return data;
 };
+
+// ─── AI Agent ───────────────────────────────────────────
+
+/**
+ * Query the AI Agent with data-driven insights.
+ * Agent analyzes company data and makes informed recommendations.
+ */
+export const queryAgent = async (params) => {
+  const res = await analyzer.post('/agent/query', params);
+  return res.data;
+};

@@ -284,6 +284,94 @@ async def create_designer(body: CreateDesignerBody):
         raise HTTPException(status_code=500, detail=f"Could not create account: {exc}")
 
 
+# ─── AI Agent Endpoint ──────────────────────────────────────
+
+class AgentQuery(BaseModel):
+    query: str
+    date: str
+    context: str = 'editorial_operations'
+
+
+@app.post("/agent/query")
+async def agent_query(body: AgentQuery):
+    """
+    Query the AI Agent with data-driven insights.
+    Agent analyzes company data and provides recommendations.
+    """
+    try:
+        from google import genai
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+
+        # Build data context for the agent
+        supabase = _create_supabase_client(
+            os.getenv("SUPABASE_URL", ""),
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        )
+
+        # Fetch recent data for context
+        pages_data = supabase.from('pages').select('*').eq('edition_date', body.date).execute()
+        editions_data = supabase.from('editions').select('*').eq('date', body.date).execute()
+
+        pages_count = len(pages_data.data) if pages_data.data else 0
+        sections = {}
+        if pages_data.data:
+            for page in pages_data.data:
+                section = page.get('section', 'Unknown')
+                sections[section] = sections.get(section, 0) + 1
+
+        # Build system prompt for the agent
+        system_prompt = f"""You are an AI Agent trained on NewEra's editorial operations data. 
+Today's date: {body.date}
+Current context: {pages_count} pages uploaded across sections: {sections}
+
+You have access to:
+- Page upload data (filenames, sections, status)
+- Edition information (deadline, expected pages, status)
+- Designer performance (upload counts)
+- Subscriber data (all sections subscribed to)
+- Historical patterns from the past 90 days
+
+Your role is to:
+1. Analyze patterns in editorial operations
+2. Provide data-driven recommendations
+3. Answer questions about performance, trends, and optimization
+4. Make informed decisions based on available data
+5. Help the admin team run operations more efficiently
+
+Keep responses concise, actionable, and data-focused.
+Always explain your reasoning based on available data."""
+
+        # Query the agent
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                f"System context:\n{system_prompt}\n\nUser query: {body.query}",
+            ],
+            config=genai.types.GenerateContentConfig(temperature=0.7),
+        )
+
+        answer_text = (response.text or "").strip()
+
+        logger.info("Agent query: %s", body.query[:100])
+
+        return {
+            "answer": answer_text,
+            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections",
+            "data": {
+                "pages_uploaded": pages_count,
+                "sections": sections,
+                "query_date": body.date,
+            },
+        }
+
+    except Exception as exc:
+        logger.exception("Agent query failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agent analysis failed: {str(exc)}"
+        )
+
+
 class ConfirmEmailBody(BaseModel):
     email: str
 
