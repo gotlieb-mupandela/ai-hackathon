@@ -1,0 +1,41 @@
+{
+  "date": "2026-03-13",
+  "status": "published",
+  "expected_pages": 24,
+  "deadline": "15:00",
+  "published_at": "02:36:36",
+  "pages": [
+    {
+      "filename": "Pro forma invoice.pdf",
+      "page_number": 1,
+      "section": "News",
+      "headline": "New Era",
+      "tags": [
+        "news",
+        "sports",
+        "business",
+        "vibez",
+        "agriToday"
+      ],
+      "uploaded_at": "23:48:38"
+    },
+    {
+      "filename": "ASSIGNMENT POM (1).pdf",
+      "page_number": 1,
+      "section": "News",
+      "headline": "Page from ASSIGNMENT POM (1)",
+      "tags": [],
+      "uploaded_at": "23:48:38"
+    }
+  ],
+  "sections": {
+    "News": [
+      1,
+      1
+    ]
+  },
+  "outputs": {
+    "full_paper": "C:\\Users\\user\\Downloads\\AI\\newera-system\\output\\2026-03-13\\full_paper.pdf",
+    "news": "C:\\Users\\user\\Downloads\\AI\\newera-system\\output\\2026-03-13\\news.pdf"
+  }
+}

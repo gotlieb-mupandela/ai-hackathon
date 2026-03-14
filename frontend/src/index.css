@@ -1,0 +1,199 @@
+/* Global reset and base styles */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* ── New Era Brand Palette ─────────────────────────────── */
+
+  /* Backgrounds (Light Theme) */
+  --bg-primary: #ffffff;          /* White */
+  --bg-secondary: #f8fafc;        /* Lighter panel background */
+  --bg-card: rgba(255, 255, 255, 0.9); /* Glassy card */
+  --bg-elevated: #ffffff;
+
+  /* Borders */
+  --border: rgba(0, 0, 0, 0.1);
+  --border-light: rgba(0, 0, 0, 0.05);
+
+  /* ── Accent: New Era Red ─────────────────────────────── */
+  --accent: #D32F2F;              /* Brand red — masthead, active states */
+  --accent-hover: #EF5350;        /* Lighter red on hover */
+  --accent-glow: rgba(211, 47, 47, 0.15);
+
+  /* Secondary accent: dark navy highlight */
+  --accent-secondary: #1B2445;    /* New Era deep navy */
+  --accent-secondary-light: #253260;
+
+  /* Semantic colours */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+
+  /* Layout */
+  --sidebar-width: 280px;
+  --navbar-height: 70px;
+
+  /* Radii */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  /* Shadows */
+  --shadow-sm: 0 2px 4px rgba(0,0,0,0.15);
+  --shadow: 0 8px 20px rgba(0,0,0,0.25);
+  --shadow-md: 0 14px 28px rgba(0,0,0,0.3);
+  --shadow-lg: 0 24px 40px rgba(0,0,0,0.35);
+  --shadow-glow: 0 0 24px rgba(211, 47, 47, 0.2);
+
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-primary);
+  /* Subtle ambient pattern/glow for light mode */
+  background-image:
+    radial-gradient(circle at 10% 70%, rgba(211, 47, 47, 0.03), transparent 30%),
+    radial-gradient(circle at 90% 20%, rgba(27, 36, 69, 0.03), transparent 30%);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6, .display-font {
+  font-family: 'Outfit', sans-serif;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  border: 2px solid var(--bg-primary);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Common Page Header */
+.page-header { 
+  margin-bottom: 48px; 
+  animation: fadeInDown 0.6s ease-out forwards;
+}
+.page-title { 
+  font-size: 36px; 
+  font-weight: 800; 
+  color: var(--text-primary); 
+  margin-bottom: 12px; 
+  letter-spacing: -0.03em;
+}
+.page-subtitle { 
+  font-size: 18px; 
+  color: var(--text-secondary); 
+  font-weight: 400;
+}
+
+/* Common Panel Title */
+.panel-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Common Section Title */
+.section-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 24px;
+  letter-spacing: -0.02em;
+}
+
+/* Utility classes */
+.mono {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  transition: var(--transition);
+}
+
+input, select, textarea {
+  font-family: inherit;
+  outline: none;
+  transition: var(--transition);
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+  transition: var(--transition);
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+}

@@ -1,0 +1,318 @@
+"""
+NewEra Editorial System — Backend
+PDF analysis via Gemini + WhatsApp subscriber notifications.
+"""
+
+import io
+import logging
+import os
+import tempfile
+import threading
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+from supabase import create_client as _create_supabase_client
+
+from gemini import analyze_page, configure_gemini
+from whatsapp import (
+    add_number,
+    get_numbers,
+    load_subscribers,
+    remove_number,
+    save_subscribers_data,
+    send_pdf_to_all,
+)
+
+# PDF-to-image conversion
+from pdf2image import convert_from_path
+
+POPPLER_PATH = r"C:\poppler\poppler-24.08.0\Library\bin"
+
+app = FastAPI(title="NewEra PDF Analyzer", version="2.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configure Gemini on startup
+configure_gemini()
+
+
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "service": "NewEra PDF Analyzer"}
+
+
+@app.post("/analyze")
+async def analyze_pdf(file: UploadFile = File(...)):
+    """
+    Accept a PDF file, convert to image, analyze with Gemini.
+    Returns: { page_number, section, headline, tags }
+    No auth required — frontend handles auth via Supabase.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+
+    try:
+        # Save PDF to temp file
+        content = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+            tmp_pdf.write(content)
+            tmp_pdf_path = tmp_pdf.name
+
+        # Convert PDF to high-quality JPG image (like taking a photo of the page)
+        images = convert_from_path(
+            tmp_pdf_path, dpi=200, first_page=1, last_page=1,
+            poppler_path=POPPLER_PATH,
+        )
+        if not images:
+            raise ValueError("Could not convert PDF to image")
+
+        # Save as high-quality JPEG for Gemini (flush so it's readable immediately)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+            images[0].save(tmp_img, "JPEG", quality=95)
+            tmp_img.flush()
+            os.fsync(tmp_img.fileno())
+            tmp_img_path = tmp_img.name
+
+        # Analyze with Gemini
+        result = analyze_page(tmp_img_path)
+
+        # Cleanup temp files
+        try:
+            os.unlink(tmp_pdf_path)
+            os.unlink(tmp_img_path)
+        except Exception:
+            pass
+
+        logger.info(
+            "Analyzed %s → p%s [%s] \"%s\"",
+            file.filename,
+            result.get("page_number"),
+            result.get("section"),
+            (result.get("headline") or "")[:60],
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Analysis failed for %s: %s", file.filename, exc)
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(exc)}")
+
+
+# ─── WhatsApp Subscriber Endpoints ──────────────────────────
+
+
+class PhoneBody(BaseModel):
+    phone: str
+
+
+class NotifyBody(BaseModel):
+    edition_date: str
+
+
+@app.get("/subscribers")
+async def list_subscribers():
+    """Return the full subscriber data (numbers list + auto_send flag)."""
+    try:
+        return load_subscribers()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/subscribers/add")
+async def add_subscriber(body: PhoneBody):
+    """Add a phone number to the subscriber list."""
+    if not body.phone.strip():
+        raise HTTPException(status_code=400, detail="Phone number is required")
+    try:
+        numbers = add_number(body.phone)
+        return {"numbers": numbers}
+    except RuntimeError as exc:
+        logger.error("add_subscriber failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/subscribers/remove")
+async def remove_subscriber(body: PhoneBody):
+    """Remove a phone number from the subscriber list."""
+    try:
+        numbers = remove_number(body.phone)
+        return {"numbers": numbers}
+    except RuntimeError as exc:
+        logger.error("remove_subscriber failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/subscribers/auto-send")
+async def toggle_auto_send():
+    """Toggle the auto_send flag."""
+    try:
+        data = load_subscribers()
+        data["auto_send"] = not data.get("auto_send", True)
+        save_subscribers_data(data)
+        return {"auto_send": data["auto_send"]}
+    except RuntimeError as exc:
+        logger.error("toggle_auto_send failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/notify-subscribers")
+async def notify_subscribers(body: NotifyBody, background_tasks: BackgroundTasks):
+    """
+    Trigger WhatsApp PDF delivery to all subscribers.
+    Runs in a background thread so the API responds immediately.
+    """
+    if not body.edition_date.strip():
+        raise HTTPException(status_code=400, detail="edition_date is required")
+
+    logger.info("Queued WhatsApp notifications for edition %s", body.edition_date)
+
+    background_tasks.add_task(send_pdf_to_all, body.edition_date)
+
+    return {"status": "queued", "edition_date": body.edition_date}
+
+
+# ─── Designer Account Creation (Admin only) ──────────────────
+
+
+class CreateDesignerBody(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/admin/create-designer")
+async def create_designer(body: CreateDesignerBody):
+    """
+    Create a designer auth account using the service role key.
+    This sets email_confirm=True so the designer can sign in immediately
+    without needing to confirm their email.
+    """
+    email = body.email.strip().lower()
+    password = body.password.strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=500, detail="Server is missing Supabase credentials")
+
+    try:
+        admin_client = _create_supabase_client(supabase_url, service_key)
+        # admin.create_user creates the account with email already confirmed
+        response = admin_client.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+        })
+        logger.info("Designer account created for %s", email)
+        return {"email": email, "id": str(response.user.id)}
+    except Exception as exc:
+        msg = str(exc)
+        logger.error("Failed to create designer %s: %s", email, msg)
+        if "already registered" in msg or "already been registered" in msg or "duplicate" in msg.lower():
+            raise HTTPException(status_code=409, detail=f"{email} already has an account")
+        raise HTTPException(status_code=500, detail=f"Could not create account: {msg}")
+
+
+class ConfirmEmailBody(BaseModel):
+    email: str
+
+
+@app.post("/admin/confirm-email")
+async def confirm_designer_email(body: ConfirmEmailBody):
+    """
+    Confirm a designer's email via the Supabase Admin REST API (direct HTTP, service role key).
+    Fixes accounts created with the old signUp() flow that have unconfirmed emails.
+    """
+    import requests as _requests
+
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=500, detail="Server is missing Supabase credentials")
+
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+
+    import requests as _requests
+
+    headers = {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        # List users with a small page size to avoid Supabase 500 errors
+        target = None
+        page = 1
+        while True:
+            resp = _requests.get(
+                f"{supabase_url}/auth/v1/admin/users",
+                headers=headers,
+                params={"page": page, "per_page": 50},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Response may be a list or {"users": [...]}
+            batch = data if isinstance(data, list) else data.get("users", [])
+            if not batch:
+                break
+            target = next((u for u in batch if u.get("email") == email), None)
+            if target or len(batch) < 50:
+                break
+            page += 1
+
+        if not target:
+            raise HTTPException(status_code=404, detail=f"No auth account found for {email}")
+
+        user_id = target["id"]
+
+        # Confirm the email
+        patch_resp = _requests.patch(
+            f"{supabase_url}/auth/v1/admin/users/{user_id}",
+            headers=headers,
+            json={"email_confirm": True},
+            timeout=15,
+        )
+        patch_resp.raise_for_status()
+
+        logger.info("Email confirmed for %s (id=%s)", email, user_id)
+        return {"email": email, "confirmed": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to confirm email for %s: %s", email, exc)
+        raise HTTPException(status_code=500, detail=f"Could not confirm email: {str(exc)}")

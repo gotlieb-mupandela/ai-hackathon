@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pdf2image
+Pillow
+python-dotenv
+google-genai
+pywhatkit
+pyautogui
+supabase
