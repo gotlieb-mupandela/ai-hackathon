@@ -95,9 +95,14 @@ export default function Pipeline() {
   const todayStr = getTodayStr();
 
   useEffect(() => {
-    getPages(todayStr).then(pages => {
-      setPageCount(pages.length);
-    }).catch(() => {});
+    const refresh = () => {
+      getPages(todayStr).then(pages => {
+        setPageCount(pages.length);
+      }).catch(() => {});
+    };
+    refresh();
+    const interval = setInterval(refresh, 3000);
+    return () => clearInterval(interval);
   }, [todayStr]);
 
   // Auto-run pipeline when all pages are uploaded & analysed, or when deadline is reached (Step 4 → 5 in "The New Way")
@@ -230,40 +235,34 @@ export default function Pipeline() {
 
       // AI-analyze only the pages without clear filename numbers
       if (needsAiAnalysis.length > 0) {
-        addLog(`  ${needsAiAnalysis.length} pages need AI vision analysis...`);
+        addLog(`  ${needsAiAnalysis.length} pages need AI vision analysis — running ALL simultaneously...`);
 
-        const BATCH_SIZE = 5;
-        for (let i = 0; i < needsAiAnalysis.length; i += BATCH_SIZE) {
-          const batch = needsAiAnalysis.slice(i, i + BATCH_SIZE);
-          addLog(`  AI batch ${Math.floor(i / BATCH_SIZE) + 1}: analyzing ${batch.length} pages simultaneously...`);
+        const results = await Promise.allSettled(
+          needsAiAnalysis.map(async (page) => {
+            const blob = await downloadFromStorage('Upload', page.storage_path);
+            const file = new File([blob], page.filename, { type: 'application/pdf' });
+            const analysis = await analyzePage(file);
+            await updatePage(page.id, {
+              page_number: analysis.page_number,
+              section: analysis.section,
+              headline: analysis.headline,
+              tags: analysis.tags,
+              status: 'analysed',
+            });
+            return { page, analysis };
+          })
+        );
 
-          const results = await Promise.allSettled(
-            batch.map(async (page) => {
-              const blob = await downloadFromStorage('Upload', page.storage_path);
-              const file = new File([blob], page.filename, { type: 'application/pdf' });
-              const analysis = await analyzePage(file);
-              await updatePage(page.id, {
-                page_number: analysis.page_number,
-                section: analysis.section,
-                headline: analysis.headline,
-                tags: analysis.tags,
-                status: 'analysed',
-              });
-              return { page, analysis };
-            })
-          );
-
-          results.forEach((r, idx) => {
-            if (r.status === 'fulfilled') {
-              const { page, analysis } = r.value;
-              addLog(`  ${page.filename} → page ${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
-              analysisSuccess++;
-            } else {
-              addLog(`  [ERROR] ${batch[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
-              analysisFailed++;
-            }
-          });
-        }
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') {
+            const { page, analysis } = r.value;
+            addLog(`  ${page.filename} → page ${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
+            analysisSuccess++;
+          } else {
+            addLog(`  [ERROR] ${needsAiAnalysis[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
+            analysisFailed++;
+          }
+        });
       } else {
         addLog('  All pages resolved from filenames — no AI calls needed!');
       }

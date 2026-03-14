@@ -179,7 +179,6 @@ export default function Upload() {
     }
   };
 
-  const uploadedCount = pages.length;
   const hasActiveUploads = Object.keys(uploadingFiles).length > 0;
 
   return (
