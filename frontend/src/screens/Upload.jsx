@@ -13,6 +13,30 @@ import {
 import { useAuth } from '../context/AuthContext';
 import './Upload.css';
 
+/**
+ * Extract page number from a filename like NE_20260302_05.pdf → 5
+ * Supports patterns: _05.pdf, _5.pdf, -05.pdf, page05.pdf, (5).pdf, _01 (4).pdf → 1
+ * Returns null if no clear page number is found.
+ */
+function extractPageNumberFromFilename(filename) {
+  if (!filename) return null;
+  const name = filename.replace(/\.pdf$/i, '').trim();
+
+  // Pattern: _NN or -NN at the end (most common: NE_20260302_05)
+  const trailingNum = name.match(/[_-](\d{1,3})(?:\s*\(\d+\))?$/);
+  if (trailingNum) return parseInt(trailingNum[1], 10);
+
+  // Pattern: page followed by digits
+  const pagePrefix = name.match(/page\s*(\d{1,3})/i);
+  if (pagePrefix) return parseInt(pagePrefix[1], 10);
+
+  // Pattern: just a bare number as the whole name or after a space
+  const bareNum = name.match(/(?:^|\s)(\d{1,3})$/);
+  if (bareNum) return parseInt(bareNum[1], 10);
+
+  return null;
+}
+
 const STATUS_COLORS = {
   uploaded: 'var(--text-muted)',
   analysing: 'var(--warning, #f59e0b)',
@@ -98,27 +122,43 @@ export default function Upload() {
           uploaded_by: user?.email || 'unknown',
         });
 
-        setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
-        try {
-          const analysis = await analyzePage(file);
+        // Check if page number is already in the filename (e.g. NE_20260302_05.pdf → 5)
+        const filenamePageNum = extractPageNumberFromFilename(file.name);
+
+        if (filenamePageNum != null) {
+          // Page number found in filename — save immediately, skip AI vision call
           await updatePage(pageRecord.id, {
-            page_number: analysis.page_number,
-            section: analysis.section,
-            headline: analysis.headline,
-            tags: analysis.tags,
+            page_number: filenamePageNum,
+            section: null,
+            headline: null,
+            tags: [],
             status: 'analysed',
           });
-          showToast(`${file.name} analysed ✓`, 'success');
-        } catch (analyzeErr) {
-          console.error('Analysis failed:', analyzeErr);
-          await updatePage(pageRecord.id, { status: 'error' });
-          const isNetworkError = analyzeErr.code === 'ERR_NETWORK' ||
-            analyzeErr.message?.includes('Network Error') ||
-            analyzeErr.message?.includes('ECONNREFUSED');
-          if (isNetworkError) {
-            showToast(`${file.name} uploaded but analysis failed — is backend running?`, 'error');
-          } else {
-            showToast(`${file.name} analysis failed: ${analyzeErr.message}`, 'error');
+          showToast(`${file.name} → page ${filenamePageNum} (from filename)`, 'success');
+        } else {
+          // No page number in filename — call AI vision to extract it
+          setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
+          try {
+            const analysis = await analyzePage(file);
+            await updatePage(pageRecord.id, {
+              page_number: analysis.page_number,
+              section: analysis.section,
+              headline: analysis.headline,
+              tags: analysis.tags,
+              status: 'analysed',
+            });
+            showToast(`${file.name} analysed → page ${analysis.page_number}`, 'success');
+          } catch (analyzeErr) {
+            console.error('Analysis failed:', analyzeErr);
+            await updatePage(pageRecord.id, { status: 'error' });
+            const isNetworkError = analyzeErr.code === 'ERR_NETWORK' ||
+              analyzeErr.message?.includes('Network Error') ||
+              analyzeErr.message?.includes('ECONNREFUSED');
+            if (isNetworkError) {
+              showToast(`${file.name} uploaded but analysis failed — is backend running?`, 'error');
+            } else {
+              showToast(`${file.name} analysis failed: ${analyzeErr.message}`, 'error');
+            }
           }
         }
 
@@ -345,7 +385,7 @@ export default function Upload() {
               {reanalyzing ? (
                 <><span className="spin" style={{ display: 'inline-block' }}>↻</span> Analyzing…</>
               ) : (
-                <>↻ Re-Analyze All with Gemini</>
+                <>↻ Re-Analyze All</>
               )}
             </button>
           </div>

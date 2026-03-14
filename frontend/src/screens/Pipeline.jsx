@@ -59,6 +59,22 @@ function formatElapsed(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/**
+ * Extract page number from filename (e.g. NE_20260302_05.pdf → 5).
+ * Returns null if no clear number is found.
+ */
+function extractPageNumberFromFilename(filename) {
+  if (!filename) return null;
+  const name = filename.replace(/\.pdf$/i, '').trim();
+  const trailingNum = name.match(/[_-](\d{1,3})(?:\s*\(\d+\))?$/);
+  if (trailingNum) return parseInt(trailingNum[1], 10);
+  const pagePrefix = name.match(/page\s*(\d{1,3})/i);
+  if (pagePrefix) return parseInt(pagePrefix[1], 10);
+  const bareNum = name.match(/(?:^|\s)(\d{1,3})$/);
+  if (bareNum) return parseInt(bareNum[1], 10);
+  return null;
+}
+
 function getTodayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -159,11 +175,10 @@ export default function Pipeline() {
     setProgress(0);
 
     try {
-      // Step 0: Analyze ALL pages with Gemini (always runs — never skipped)
+      // Step 0: Smart page analysis — use filename numbers first, AI only when needed
       let start = Date.now();
       updateStep(0, 'running');
       addLog('=== Pipeline started ===');
-      addLog('Sending all pages to Gemini for analysis...');
 
       const allPagesToday = await getPages(todayStr);
 
@@ -174,48 +189,90 @@ export default function Pipeline() {
         return;
       }
 
-      addLog(`Found ${allPagesToday.length} pages — analyzing ALL in parallel for speed...`);
+      addLog(`Found ${allPagesToday.length} pages — detecting page numbers...`);
 
-      // Process all pages in parallel — massive speed boost
-      const BATCH_SIZE = 5;
+      // Split pages: ones with numbers in filename vs ones that need AI
+      const filenameResolved = [];
+      const needsAiAnalysis = [];
+
+      for (const page of allPagesToday) {
+        const pageNum = extractPageNumberFromFilename(page.filename);
+        if (pageNum != null) {
+          filenameResolved.push({ page, pageNum });
+        } else {
+          needsAiAnalysis.push(page);
+        }
+      }
+
+      // Instantly resolve filename-based pages (no API call needed)
       let analysisSuccess = 0;
       let analysisFailed = 0;
 
-      for (let i = 0; i < allPagesToday.length; i += BATCH_SIZE) {
-        const batch = allPagesToday.slice(i, i + BATCH_SIZE);
-        addLog(`  Batch ${Math.floor(i / BATCH_SIZE) + 1}: analyzing ${batch.length} pages simultaneously...`);
-
-        const results = await Promise.allSettled(
-          batch.map(async (page) => {
-            const blob = await downloadFromStorage('Upload', page.storage_path);
-            const file = new File([blob], page.filename, { type: 'application/pdf' });
-            const analysis = await analyzePage(file);
-            await updatePage(page.id, {
-              page_number: analysis.page_number,
-              section: analysis.section,
-              headline: analysis.headline,
-              tags: analysis.tags,
-              status: 'analysed',
-            });
-            return { page, analysis };
+      if (filenameResolved.length > 0) {
+        addLog(`  ${filenameResolved.length} pages have page numbers in their filenames — resolving instantly...`);
+        await Promise.all(
+          filenameResolved.map(async ({ page, pageNum }) => {
+            try {
+              await updatePage(page.id, {
+                page_number: pageNum,
+                section: page.section || null,
+                headline: page.headline || null,
+                tags: page.tags || [],
+                status: 'analysed',
+              });
+              addLog(`  ${page.filename} → page ${pageNum} (from filename)`);
+              analysisSuccess++;
+            } catch (err) {
+              addLog(`  [ERROR] ${page.filename}: ${err.message}`);
+              analysisFailed++;
+            }
           })
         );
-
-        results.forEach((r, idx) => {
-          if (r.status === 'fulfilled') {
-            const { page, analysis } = r.value;
-            addLog(`  ✓ ${page.filename} → p${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
-            analysisSuccess++;
-          } else {
-            addLog(`  [ERROR] ${batch[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
-            analysisFailed++;
-          }
-        });
       }
 
-      addLog(`Gemini analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
+      // AI-analyze only the pages without clear filename numbers
+      if (needsAiAnalysis.length > 0) {
+        addLog(`  ${needsAiAnalysis.length} pages need AI vision analysis...`);
+
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < needsAiAnalysis.length; i += BATCH_SIZE) {
+          const batch = needsAiAnalysis.slice(i, i + BATCH_SIZE);
+          addLog(`  AI batch ${Math.floor(i / BATCH_SIZE) + 1}: analyzing ${batch.length} pages simultaneously...`);
+
+          const results = await Promise.allSettled(
+            batch.map(async (page) => {
+              const blob = await downloadFromStorage('Upload', page.storage_path);
+              const file = new File([blob], page.filename, { type: 'application/pdf' });
+              const analysis = await analyzePage(file);
+              await updatePage(page.id, {
+                page_number: analysis.page_number,
+                section: analysis.section,
+                headline: analysis.headline,
+                tags: analysis.tags,
+                status: 'analysed',
+              });
+              return { page, analysis };
+            })
+          );
+
+          results.forEach((r, idx) => {
+            if (r.status === 'fulfilled') {
+              const { page, analysis } = r.value;
+              addLog(`  ${page.filename} → page ${analysis.page_number} [${analysis.section}] "${(analysis.headline || '').substring(0, 40)}"`);
+              analysisSuccess++;
+            } else {
+              addLog(`  [ERROR] ${batch[idx].filename}: ${r.reason?.message || 'Unknown error'}`);
+              analysisFailed++;
+            }
+          });
+        }
+      } else {
+        addLog('  All pages resolved from filenames — no AI calls needed!');
+      }
+
+      addLog(`Analysis complete: ${analysisSuccess} succeeded, ${analysisFailed} failed`);
       if (analysisFailed > 0) {
-        addLog(`[WARN] ${analysisFailed} pages failed analysis — check backend is running at http://localhost:8000`);
+        addLog(`[WARN] ${analysisFailed} pages failed — check backend at http://localhost:8000`);
       }
 
       updateStep(0, 'done', Date.now() - start);

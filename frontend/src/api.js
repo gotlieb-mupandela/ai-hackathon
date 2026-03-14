@@ -12,7 +12,7 @@ const ANALYZER_URL = 'http://localhost:8000';
 
 const analyzer = axios.create({
   baseURL: ANALYZER_URL,
-  timeout: 30000, // 30s — optimised backend should respond in <15s
+  timeout: 120000, // 2 min — allows for OpenRouter vision model response times
 });
 
 // ─── PDF Analysis (Python backend) ──────────────────────────
