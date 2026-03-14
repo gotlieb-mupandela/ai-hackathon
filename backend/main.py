@@ -295,8 +295,11 @@ class AgentQuery(BaseModel):
 @app.post("/agent/query")
 async def agent_query(body: AgentQuery):
     """
-    Query the AI Agent. Uses Ollama (llama3) when available, falls back to Gemini.
+    Query the AI Agent via OpenRouter (GLM-4.5-Air free model).
+    Falls back to Gemini if OpenRouter key is missing.
     """
+    import requests as _req
+
     try:
         supabase = _create_supabase_client(
             os.getenv("SUPABASE_URL", ""),
@@ -331,47 +334,55 @@ async def agent_query(body: AgentQuery):
             "Keep responses concise, actionable, and data-focused."
         )
 
-        answer_text = ""
-        model_used   = ""
+        openrouter_key   = os.getenv("OPENROUTER_API_KEY", "")
+        openrouter_model = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.5-air:free")
+        answer_text      = ""
+        model_used       = ""
 
-        # ── Try Ollama first (offline) ─────────────────────────────────
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
-        ollama_host  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        try:
-            import ollama as _ollama
-            client = _ollama.Client(host=ollama_host)
-            resp = client.chat(
-                model=ollama_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": body.query},
-                ],
-                options={"temperature": 0.7},
+        if openrouter_key:
+            # ── OpenRouter ─────────────────────────────────────────────
+            resp = _req.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://newera-editorial.app",
+                    "X-Title": "NewEra Editorial Agent",
+                },
+                json={
+                    "model": openrouter_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": body.query},
+                    ],
+                    "temperature": 0.7,
+                },
+                timeout=60,
             )
-            answer_text = resp.message.content.strip()
-            model_used  = f"llama3 (offline)"
-            logger.info("Agent query handled by Ollama/%s", ollama_model)
+            resp.raise_for_status()
+            answer_text = resp.json()["choices"][0]["message"]["content"].strip()
+            model_used  = openrouter_model
+            logger.info("Agent query handled by OpenRouter/%s", openrouter_model)
 
-        except Exception as ollama_exc:
-            logger.warning("Ollama unavailable (%s) — falling back to Gemini", ollama_exc)
-
-            # ── Fall back to Gemini ────────────────────────────────────
+        else:
+            # ── Fallback to Gemini if no OpenRouter key ─────────────────
+            logger.warning("OPENROUTER_API_KEY not set — falling back to Gemini")
             from google import genai as _genai
             gemini_client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
-            resp = gemini_client.models.generate_content(
+            gr = gemini_client.models.generate_content(
                 model="gemini-2.0-flash",
                 contents=[f"System context:\n{system_prompt}\n\nUser query: {body.query}"],
                 config=_genai.types.GenerateContentConfig(temperature=0.7),
             )
-            answer_text = (resp.text or "").strip()
-            model_used  = "gemini-2.0-flash (cloud)"
+            answer_text = (gr.text or "").strip()
+            model_used  = "gemini-2.0-flash"
             logger.info("Agent query handled by Gemini fallback")
 
         logger.info("Agent query: %s", body.query[:100])
 
         return {
             "answer": answer_text,
-            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections ({model_used})",
+            "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections",
             "data": {
                 "pages_uploaded": pages_count,
                 "sections": sections,

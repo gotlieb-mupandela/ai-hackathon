@@ -193,7 +193,7 @@ export default function AIAgent() {
           <h3 className="agent-status-title">Agent Status</h3>
           <div className="agent-status-item">
             <span className="status-label">Model</span>
-            <span className="status-value">Llama 3 (Offline)</span>
+            <span className="status-value">GLM-4.5 Air (OpenRouter)</span>
           </div>
           <div className="agent-status-item">
             <span className="status-label">Data Sources</span>
