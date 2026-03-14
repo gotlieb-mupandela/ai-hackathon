@@ -15,7 +15,6 @@ const SECTIONS = [
   { key: 'business',   label: 'Business' },
   { key: 'vibez',      label: 'Vibez!' },
   { key: 'agritoday',  label: 'AgriToday' },
-  { key: 'solzi',      label: 'Solzi' },
 ];
 
 export default function SubscriberPanel() {
@@ -144,7 +143,8 @@ export default function SubscriberPanel() {
         </div>
         <p className="subscriber-desc">
           Published editions are automatically sent to these numbers via WhatsApp.
-          Choose which sections each subscriber receives.
+          Each subscriber receives a unique one-time PIN before their PDF — they must enter it to open the file.
+          A new PIN is generated on every send.
         </p>
       </div>
 
@@ -191,7 +191,7 @@ export default function SubscriberPanel() {
           </div>
         ) : (
           numbers.map((phone) => {
-            const prefs = preferences[phone] || ['full_paper'];
+            const prefs    = preferences[phone] || ['full_paper'];
             const isSaving = savingPref[phone];
             return (
               <div key={phone} className="subscriber-item">
@@ -205,6 +205,13 @@ export default function SubscriberPanel() {
                     Remove
                   </button>
                 </div>
+
+                {/* OTP indicator — PIN is generated fresh on every send */}
+                <div className="subscriber-password-row">
+                  <span className="subscriber-password-label">PDF Security:</span>
+                  <span className="subscriber-otp-badge">One-Time PIN per edition</span>
+                </div>
+
                 <div className="subscriber-sections">
                   <span className="subscriber-sections-label">
                     {isSaving ? 'Saving...' : 'Receives:'}

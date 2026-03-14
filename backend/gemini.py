@@ -83,6 +83,10 @@ SECTION_ALIASES = {
     "politics": "News",
     "national": "News",
     "general": "News",
+    "community": "News",
+    "social": "News",
+    "human interest": "News",
+    "local": "News",
 }
 
 # Gemini fallback client (only used when OpenRouter key is absent)
