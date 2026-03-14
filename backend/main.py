@@ -3,18 +3,21 @@ NewEra Editorial System — Backend
 PDF analysis via Gemini + WhatsApp subscriber notifications.
 """
 
+import asyncio
 import io
 import logging
 import os
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from pypdf import PdfReader, PdfWriter
 
 load_dotenv()
 
@@ -30,6 +33,7 @@ from gemini import analyze_page, configure_gemini
 from whatsapp import (
     add_number,
     get_numbers,
+    get_password,
     load_subscribers,
     remove_number,
     save_subscribers_data,
@@ -54,6 +58,139 @@ app.add_middleware(
 
 # Configure Gemini on startup
 configure_gemini()
+
+# ─── Section keyword map for PDF text extraction ──────────────────────────────
+# Order matters: more specific keywords first to avoid "news" matching "business news"
+_SECTION_TEXT_KEYWORDS: list[tuple[str, str]] = [
+    ("agritoday", "AgriToday"),
+    ("agri today", "AgriToday"),
+    ("vibez!", "Vibez!"),
+    ("vibez", "Vibez!"),
+    ("business", "Business"),
+    ("sport", "Sport"),
+    ("solzi", "Solzi"),
+    ("news", "News"),
+]
+
+
+def _extract_section_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
+    """
+    Try to extract a section keyword from the first page's embedded text.
+    Returns the matched section name, or None if the PDF is image-based.
+    This is instant (~5ms) — no AI call needed.
+    """
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        if not reader.pages:
+            return None
+        text = (reader.pages[0].extract_text() or "").lower()
+        if not text.strip():
+            return None  # Image-only PDF — fall through to AI vision
+        for keyword, section in _SECTION_TEXT_KEYWORDS:
+            if keyword in text:
+                return section
+    except Exception:
+        pass
+    return None
+
+
+def _extract_page_number_from_pdf_bytes(pdf_bytes: bytes) -> int:
+    """
+    Attempt to read the page number from embedded PDF text.
+    Looks for patterns like 'Page 5', 'p.5', or lone small integers near edges.
+    Returns 0 if not found.
+    """
+    import re
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        if not reader.pages:
+            return 0
+        text = (reader.pages[0].extract_text() or "")
+        match = re.search(r'\bpage\s*(\d{1,3})\b', text, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        pass
+    return 0
+
+
+def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
+    """
+    Synchronous worker for a single page — run inside a ThreadPoolExecutor.
+
+    Strategy:
+      1. Try PDF text extraction (instant, ~5ms) to find section keyword.
+      2. Fall back to AI vision only when text extraction returns nothing
+         (image-based PDFs, or pages without a section header in the text layer).
+    """
+    section = _extract_section_from_pdf_bytes(pdf_bytes)
+    page_number = _extract_page_number_from_pdf_bytes(pdf_bytes)
+
+    if section:
+        logger.info("Text-extracted [%s] p%s — %s", section, page_number or "?", filename)
+        return {
+            "filename": filename,
+            "page_number": page_number,
+            "section": section,
+            "headline": "",
+            "tags": [],
+            "method": "text",
+        }
+
+    # Text extraction found nothing — convert to image and use AI vision
+    tmp_pdf_path = None
+    tmp_img_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+            tmp_pdf.write(pdf_bytes)
+            tmp_pdf_path = tmp_pdf.name
+
+        images = convert_from_path(
+            tmp_pdf_path, dpi=100, first_page=1, last_page=1,
+            poppler_path=POPPLER_PATH,
+            thread_count=2,
+        )
+        if not images:
+            raise ValueError("Could not convert PDF to image")
+
+        img = images[0]
+        MAX_DIM = 900
+        if max(img.size) > MAX_DIM:
+            img.thumbnail((MAX_DIM, MAX_DIM))
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+            img.save(tmp_img, "JPEG", quality=45, optimize=True)
+            tmp_img.flush()
+            os.fsync(tmp_img.fileno())
+            tmp_img_path = tmp_img.name
+
+        result = analyze_page(tmp_img_path)
+        result["filename"] = filename
+        result["method"] = "vision"
+        logger.info(
+            "Vision-analyzed [%s] p%s — %s",
+            result.get("section"), result.get("page_number"), filename,
+        )
+        return result
+
+    except Exception as exc:
+        logger.error("_process_one_page_sync failed for %s: %s", filename, exc)
+        return {
+            "filename": filename,
+            "page_number": page_number,
+            "section": "News",
+            "headline": "",
+            "tags": [],
+            "method": "error",
+            "error": str(exc),
+        }
+    finally:
+        for p in (tmp_pdf_path, tmp_img_path):
+            if p:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
 
 
 @app.get("/")
@@ -123,6 +260,120 @@ async def analyze_pdf(file: UploadFile = File(...)):
     except Exception as exc:
         logger.exception("Analysis failed for %s: %s", file.filename, exc)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(exc)}")
+
+
+# ─── Batch Analysis Endpoint ─────────────────────────────────────────────────
+
+
+@app.post("/pipeline/analyze-all")
+async def analyze_all_pages(files: list[UploadFile] = File(...)):
+    """
+    Analyze all uploaded PDF pages in a single request.
+
+    Strategy per page (in parallel):
+      1. PDF text extraction — instant, no API call (digital PDFs).
+      2. AI vision fallback — only for image-based/scanned PDFs.
+
+    Returns a list of results aligned with the uploaded files order:
+      [{ filename, page_number, section, headline, tags, method }, ...]
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    # Read all file bytes concurrently (async I/O)
+    file_data: list[tuple[str, bytes]] = []
+    for f in files:
+        content = await f.read()
+        file_data.append((f.filename or "unknown.pdf", content))
+
+    # Process all pages in parallel using a thread pool.
+    # ThreadPoolExecutor is required because pdf2image (Poppler) and pypdf are
+    # CPU/IO-bound blocking operations not suitable for asyncio directly.
+    loop = asyncio.get_event_loop()
+    max_workers = min(len(file_data), 12)  # Cap at 12 to avoid overwhelming the API
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        tasks = [
+            loop.run_in_executor(pool, _process_one_page_sync, filename, pdf_bytes)
+            for filename, pdf_bytes in file_data
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Replace any exceptions with a fallback error result
+    output = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            filename = file_data[i][0] if i < len(file_data) else "unknown.pdf"
+            logger.error("analyze-all failed for %s: %s", filename, result)
+            output.append({
+                "filename": filename,
+                "page_number": 0,
+                "section": "News",
+                "headline": "",
+                "tags": [],
+                "method": "error",
+                "error": str(result),
+            })
+        else:
+            output.append(result)
+
+    text_count  = sum(1 for r in output if r.get("method") == "text")
+    vision_count = sum(1 for r in output if r.get("method") == "vision")
+    error_count  = sum(1 for r in output if r.get("method") == "error")
+    logger.info(
+        "analyze-all complete: %d pages (%d text, %d vision, %d error)",
+        len(output), text_count, vision_count, error_count,
+    )
+    return output
+
+
+# ─── PDF Protection Endpoint ─────────────────────────────────────────────────
+
+
+class ProtectPdfBody(BaseModel):
+    url: str       # Public Supabase storage URL of the PDF
+    password: str  # Subscriber's unique password
+
+
+@app.post("/protect-pdf")
+async def protect_pdf(body: ProtectPdfBody):
+    """
+    Download a PDF from a public URL and return a password-protected copy.
+    The subscriber must enter their password to open the PDF.
+    Prevents casual forwarding — recipient needs the password to view it.
+    """
+    if not body.url or not body.password:
+        raise HTTPException(status_code=400, detail="url and password are required")
+
+    try:
+        import requests as _req
+        resp = _req.get(body.url, timeout=30)
+        resp.raise_for_status()
+        pdf_bytes = resp.content
+    except Exception as exc:
+        logger.error("protect-pdf: download failed (%s): %s", body.url, exc)
+        raise HTTPException(status_code=502, detail=f"Could not download PDF: {exc}")
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        # RC4-128 has the widest support across all PDF viewers including older mobile apps
+        writer.encrypt(body.password, algorithm="RC4-128")
+        buf = io.BytesIO()
+        writer.write(buf)
+        protected_bytes = buf.getvalue()
+    except Exception as exc:
+        logger.error("protect-pdf: encryption failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"PDF encryption failed: {exc}")
+
+    logger.info("protect-pdf: encrypted %d bytes with password", len(protected_bytes))
+    return Response(
+        content=protected_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="edition_protected.pdf"'},
+    )
 
 
 # ─── WhatsApp Subscriber Endpoints ──────────────────────────
@@ -663,3 +914,8 @@ async def confirm_designer_email(body: ConfirmEmailBody):
     except Exception as exc:
         logger.error("Failed to confirm email for %s: %s", email, exc)
         raise HTTPException(status_code=500, detail=f"Could not confirm email: {str(exc)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -97,8 +97,10 @@ _gemini_client = None
 
 def configure_gemini(api_key: str | None = None) -> None:
     """
-    Configure the fallback Gemini client.
-    Primary vision analysis now uses OpenRouter — Gemini is a fallback only.
+    Configure vision analysis clients.
+    Primary: OpenRouter (if key is set). Fallback: Google Gemini.
+    Gemini is always initialised so automatic fallback works when
+    the OpenRouter key expires or returns 401/403.
     """
     global _gemini_client
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -107,17 +109,17 @@ def configure_gemini(api_key: str | None = None) -> None:
             "Vision analysis will use OpenRouter/%s",
             os.getenv("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct"),
         )
-        return  # No need to set up Gemini
 
-    # No OpenRouter key — set up Gemini as fallback
+    # Always set up Gemini so it's ready as a fallback
     key = api_key or os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
-        logger.warning("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set — vision analysis will fail")
+        if not openrouter_key:
+            logger.warning("Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is set — vision analysis will fail")
         return
     try:
         from google import genai
         _gemini_client = genai.Client(api_key=key)
-        logger.info("Gemini fallback client configured for vision analysis")
+        logger.info("Gemini client ready (%s)", "primary" if not openrouter_key else "fallback")
     except Exception as exc:
         logger.warning("Failed to create Gemini client: %s", exc)
 
@@ -125,15 +127,28 @@ def configure_gemini(api_key: str | None = None) -> None:
 def analyze_page(image_path: str, retries: int = 2) -> dict:
     """
     Analyze a newspaper page image.
-    Primary: OpenRouter vision model (meta-llama/llama-3.2-11b-vision-instruct).
-    Fallback: Google Gemini (if no OpenRouter key).
+    Primary: OpenRouter vision model.
+    Fallback: Google Gemini — used automatically if:
+      - No OpenRouter key is configured, OR
+      - OpenRouter returns a 401/403 (invalid/expired key)
     """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
     if openrouter_key:
-        return _analyze_with_openrouter(image_path, openrouter_key, retries)
-    else:
-        return _analyze_with_gemini(image_path, retries)
+        try:
+            return _analyze_with_openrouter(image_path, openrouter_key, retries)
+        except RuntimeError as exc:
+            err_str = str(exc)
+            # Auto-fallback to Gemini when the OpenRouter key is invalid/expired
+            if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
+                logger.warning(
+                    "OpenRouter key invalid/expired (401/403) — falling back to Gemini for %s",
+                    image_path,
+                )
+                return _analyze_with_gemini(image_path, retries)
+            raise
+
+    return _analyze_with_gemini(image_path, retries)
 
 
 # ── OpenRouter vision analysis ──────────────────────────────────────────────
