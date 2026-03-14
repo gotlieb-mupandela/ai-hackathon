@@ -68,7 +68,6 @@ _SECTION_TEXT_KEYWORDS: list[tuple[str, str]] = [
     ("vibez", "Vibez!"),
     ("business", "Business"),
     ("sport", "Sport"),
-    ("solzi", "Solzi"),
     ("news", "News"),
 ]
 

@@ -17,6 +17,8 @@ Environment variables (add to .env):
 import json
 import logging
 import os
+import random
+import string
 import time
 from pathlib import Path
 
@@ -26,7 +28,20 @@ logger = logging.getLogger(__name__)
 
 SUBSCRIBERS_FILE = Path(__file__).parent / "subscribers.json"
 
-ALL_SECTIONS = ["full_paper", "news", "sport", "business", "vibez", "agritoday", "solzi"]
+ALL_SECTIONS = ["full_paper", "news", "sport", "business", "vibez", "agritoday"]
+
+
+# ─── Password helpers ────────────────────────────────────────
+
+def generate_password(length: int = 6) -> str:
+    """Generate a random numeric password for a subscriber's PDF protection."""
+    return "".join(random.choices(string.digits, k=length))
+
+
+def get_password(number: str) -> str | None:
+    """Return the PDF password for a subscriber, or None if not found."""
+    data = load_subscribers()
+    return data.get("passwords", {}).get(number.strip())
 
 
 # ─── Subscriber persistence ─────────────────────────────────
@@ -36,7 +51,8 @@ def load_subscribers() -> dict:
     default = {
         "numbers": [],
         "auto_send": True,
-        "preferences": {}
+        "preferences": {},
+        "passwords": {},
     }
 
     if not SUBSCRIBERS_FILE.exists():
@@ -55,6 +71,8 @@ def load_subscribers() -> dict:
             data["auto_send"] = True
         if "preferences" not in data:
             data["preferences"] = {}
+        if "passwords" not in data:
+            data["passwords"] = {}
         return data
     except (json.JSONDecodeError, ValueError) as exc:
         logger.error("subscribers.json is corrupt (%s) — resetting to defaults", exc)
@@ -82,24 +100,30 @@ def get_numbers() -> list[str]:
 
 
 def add_number(number: str) -> dict:
-    """Add a number (default: full_paper only) and return updated subscriber data."""
+    """Add a number (default: full_paper only), auto-generate a PDF password, and return updated data."""
     data = load_subscribers()
     cleaned = number.strip()
     if cleaned and cleaned not in data["numbers"]:
         data["numbers"].append(cleaned)
         if cleaned not in data["preferences"]:
             data["preferences"][cleaned] = ["full_paper"]
+        # Auto-generate a unique PDF password for this subscriber
+        if cleaned not in data.get("passwords", {}):
+            if "passwords" not in data:
+                data["passwords"] = {}
+            data["passwords"][cleaned] = generate_password()
         save_subscribers_data(data)
     return data
 
 
 def remove_number(number: str) -> dict:
-    """Remove a number and its preferences, return updated data."""
+    """Remove a number, its preferences, and its password. Returns updated data."""
     data = load_subscribers()
     cleaned = number.strip()
     if cleaned in data["numbers"]:
         data["numbers"].remove(cleaned)
         data["preferences"].pop(cleaned, None)
+        data.get("passwords", {}).pop(cleaned, None)
         save_subscribers_data(data)
     return data
 
@@ -127,7 +151,6 @@ SECTION_FILE_MAP = {
     "business":   "business.pdf",
     "vibez":      "vibez.pdf",
     "agritoday":  "agritoday.pdf",
-    "solzi":      "solzi.pdf",
 }
 
 SECTION_LABEL_MAP = {
@@ -137,7 +160,6 @@ SECTION_LABEL_MAP = {
     "business":   "NewEra Business",
     "vibez":      "NewEra Vibez!",
     "agritoday":  "NewEra AgriToday",
-    "solzi":      "NewEra Solzi",
 }
 
 

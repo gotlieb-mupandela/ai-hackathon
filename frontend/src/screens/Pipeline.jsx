@@ -6,7 +6,7 @@ import {
   uploadToStorage,
   upsertEdition,
   getOrCreateTodayEdition,
-  analyzePage,
+  analyzeAllPages,
   updatePage,
   deduplicatePages,
   notifySubscribers,
@@ -20,7 +20,6 @@ const SECTION_FILENAME_MAP = {
   'Vibez!':  'vibez.pdf',
   Vibez:     'vibez.pdf',
   AgriToday: 'agritoday.pdf',
-  Solzi:     'solzi.pdf',
 };
 
 const STEP_NAMES = [
@@ -87,7 +86,6 @@ const KNOWN_SECTIONS_MAP = {
   news:      'News',
   vibez:     'Vibez!',
   agritoday: 'AgriToday',
-  solzi:     'Solzi',
 };
 
 function extractSectionFromFilename(filename) {
@@ -99,19 +97,29 @@ function extractSectionFromFilename(filename) {
   return null;
 }
 
-/** Process an array in batches of `size` with `delayMs` between batches. */
-async function processBatches(items, batchSize, delayMs, processFn) {
-  const results = [];
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    const batchResults = await Promise.allSettled(batch.map(processFn));
-    results.push(...batchResults);
-    if (i + batchSize < items.length && delayMs > 0) {
-      await new Promise(r => setTimeout(r, delayMs));
+/**
+ * Extract section keyword from PDF embedded text using pdfjs-dist.
+ * Digital (non-scanned) PDFs have the section header as real text — instant, no API.
+ * Returns null for image-only/scanned PDFs.
+ */
+async function extractSectionFromPdfBlob(blob, pdfjsLib) {
+  try {
+    const bytes = await blob.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const text = content.items.map(i => i.str).join(' ').toLowerCase();
+    // Check most-specific keywords first to avoid false matches
+    const ordered = ['agritoday', 'vibez', 'business', 'sport', 'news'];
+    for (const keyword of ordered) {
+      if (text.includes(keyword)) return KNOWN_SECTIONS_MAP[keyword];
     }
+  } catch {
+    // Scanned/image PDF — will fall back to backend AI vision
   }
-  return results;
+  return null;
 }
+
 
 function getTodayStr() {
   const d = new Date();
@@ -198,9 +206,14 @@ export default function Pipeline() {
 
   const mergePdfs = async (pdfBlobs) => {
     const merged = await PDFDocument.create();
-    for (const blob of pdfBlobs) {
-      const bytes = await blob.arrayBuffer();
-      const doc = await PDFDocument.load(bytes);
+    // Load all PDFs in parallel, then add pages in order
+    const docs = await Promise.all(
+      pdfBlobs.map(async (blob) => {
+        const bytes = await blob.arrayBuffer();
+        return PDFDocument.load(bytes);
+      })
+    );
+    for (const doc of docs) {
       const copiedPages = await merged.copyPages(doc, doc.getPageIndices());
       copiedPages.forEach(page => merged.addPage(page));
     }
@@ -248,133 +261,131 @@ export default function Pipeline() {
 
       updateStep(0, 'done', Date.now() - start);
 
-      // ── Step 1: Merge Full Newspaper ────────────────────────────────
+      // ── Steps 1+2: Download PDFs and extract sections simultaneously ────────
+      // pdfjs-dist reads the text layer from digital PDFs in the browser — instant,
+      // zero backend calls. Only truly image/scanned pages fall back to AI vision.
       start = Date.now();
       updateStep(1, 'running');
-      addLog(`Downloading ${sortedPages.length} PDFs in parallel...`);
+      addLog(`Downloading ${sortedPages.length} PDFs + extracting sections in parallel...`);
 
-      const downloadResults = await Promise.allSettled(
-        sortedPages.map(page => downloadFromStorage('Upload', page.storage_path))
+      // Load pdfjs-dist once (lazy import, already bundled via PdfThumbnail)
+      let pdfjsLib = null;
+      try {
+        pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.min.mjs`;
+      } catch {
+        // pdfjs unavailable — all pages fall back to backend
+      }
+
+      // Download every page and immediately attempt text extraction in parallel.
+      // This overlaps network I/O with CPU work — no sequential waiting.
+      const downloadExtractResults = await Promise.allSettled(
+        sortedPages.map(async (page, idx) => {
+          const blob = await downloadFromStorage('Upload', page.storage_path);
+          const filenameSection = extractSectionFromFilename(page.filename);
+          const pageNum = extractPageNumberFromFilename(page.filename) ?? page.page_number;
+
+          // Try frontend text extraction (instant — no HTTP call)
+          let section = filenameSection;
+          let method = filenameSection ? 'filename' : null;
+          if (!section && pdfjsLib && blob) {
+            section = await extractSectionFromPdfBlob(blob, pdfjsLib);
+            if (section) method = 'text';
+          }
+
+          return { idx, page, blob, pageNum, section, method };
+        })
       );
 
-      // Build blob array aligned with sortedPages (null on failure)
-      const pdfBlobs = downloadResults.map((r, idx) => {
-        if (r.status === 'fulfilled') return r.value;
-        addLog(`  [WARN] Could not download ${sortedPages[idx].filename}: ${r.reason?.message}`);
-        return null;
-      });
+      // Build aligned arrays and collect pages that still need AI vision
+      const pdfBlobs = new Array(sortedPages.length).fill(null);
+      const analyzedPages = new Array(sortedPages.length).fill(null);
+      const needsAI = [];
 
-      const validBlobs = pdfBlobs.filter(Boolean);
-      addLog(`  Downloaded ${validBlobs.length}/${sortedPages.length} — merging into full_paper.pdf...`);
-
-      const fullPaperBytes = await mergePdfs(validBlobs);
-      addLog(`Full newspaper merged: ${validBlobs.length} pages in order`);
-      updateStep(1, 'done', Date.now() - start);
-
-      // ── Step 2: Classify pages — filename first, then AI in batches ──
-      start = Date.now();
-      updateStep(2, 'running');
-
-      const analyzedPages = [];
-      const needsAI = [];    // indices that need AI vision
-
-      // Pass 1: check filenames for known section keywords
-      sortedPages.forEach((page, idx) => {
-        const filenameSection = extractSectionFromFilename(page.filename);
-        const pageNum = extractPageNumberFromFilename(page.filename) ?? page.page_number;
-        if (filenameSection) {
-          addLog(`  p${pageNum ?? '?'} [${filenameSection}] — ${page.filename} (from filename)`);
-          analyzedPages[idx] = { ...page, page_number: pageNum, section: filenameSection, headline: '' };
-          updatePage(page.id, { page_number: pageNum, section: filenameSection, status: 'analysed' }).catch(() => {});
+      downloadExtractResults.forEach((result, idx) => {
+        if (result.status === 'fulfilled') {
+          const { page, blob, pageNum, section, method } = result.value;
+          pdfBlobs[idx] = blob;
+          if (section) {
+            addLog(`  p${pageNum ?? '?'} [${section}] — ${page.filename} (${method})`);
+            analyzedPages[idx] = { ...page, page_number: pageNum, section, headline: '' };
+            updatePage(page.id, { page_number: pageNum, section, status: 'analysed' }).catch(() => {});
+          } else {
+            needsAI.push(idx);
+          }
         } else {
-          analyzedPages[idx] = null;
+          addLog(`  [WARN] Could not download ${sortedPages[idx].filename}: ${result.reason?.message}`);
           needsAI.push(idx);
         }
       });
 
-      const skippedCount = sortedPages.length - needsAI.length;
-      if (skippedCount > 0) {
-        addLog(`${skippedCount} page(s) classified by filename — skipping AI for those.`);
+      // Merge full newspaper from downloaded blobs
+      const validBlobs = pdfBlobs.filter(Boolean);
+      addLog(`  Downloaded ${validBlobs.length}/${sortedPages.length} — merging into full_paper.pdf...`);
+      const fullPaperBytes = await mergePdfs(validBlobs);
+      addLog(`Full newspaper merged: ${validBlobs.length} pages in order`);
+      updateStep(1, 'done', Date.now() - start);
+
+      // ── Step 2: AI vision — only for pages text extraction couldn't classify ──
+      start = Date.now();
+      updateStep(2, 'running');
+
+      const textCount = sortedPages.length - needsAI.length;
+      if (textCount > 0) {
+        addLog(`${textCount} page(s) classified instantly (filename/text extraction).`);
       }
 
-      // Pass 2: send remaining pages to AI vision in batches of 5
       if (needsAI.length > 0) {
-        addLog(`Sending ${needsAI.length} pages to AI vision (batches of 5)...`);
-        addLog('AI reads the section keyword at the top of each page (News, Sport, Business, Vibez!, AgriToday, Solzi)');
+        addLog(`${needsAI.length} page(s) need AI vision — sending in one batch...`);
 
-        const BATCH_SIZE = 5;
-        const BATCH_DELAY = 2000;
-
-        const aiResults = await processBatches(needsAI, BATCH_SIZE, BATCH_DELAY, async (idx) => {
-          const page = sortedPages[idx];
-          const blob = pdfBlobs[idx];
-          if (!blob) throw new Error('PDF not downloaded');
-          const file = new File([blob], page.filename, { type: 'application/pdf' });
-          const analysis = await analyzePage(file);
-          const pageNum = extractPageNumberFromFilename(page.filename) ?? analysis.page_number;
-          await updatePage(page.id, {
-            page_number: pageNum,
-            section: analysis.section,
-            headline: analysis.headline,
-            tags: analysis.tags,
-            status: 'analysed',
-          });
-          return { idx, page, analysis, pageNum };
-        });
-
-        // Collect results and retry failures once
-        const retryIndices = [];
-        aiResults.forEach((r, i) => {
-          const idx = needsAI[i];
-          if (r.status === 'fulfilled') {
-            const { page, analysis, pageNum } = r.value;
-            analyzedPages[idx] = { ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline };
-            addLog(`  p${pageNum ?? '?'} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename}`);
-          } else {
-            retryIndices.push(idx);
-          }
-        });
-
-        // Retry failed pages one more time (one at a time to be gentle on the API)
-        if (retryIndices.length > 0) {
-          addLog(`Retrying ${retryIndices.length} failed page(s)...`);
-          const retryResults = await processBatches(retryIndices, 2, 3000, async (idx) => {
-            const page = sortedPages[idx];
+        const batchFiles = needsAI
+          .map((idx) => {
             const blob = pdfBlobs[idx];
-            if (!blob) throw new Error('PDF not downloaded');
-            const file = new File([blob], page.filename, { type: 'application/pdf' });
-            const analysis = await analyzePage(file);
-            const pageNum = extractPageNumberFromFilename(page.filename) ?? analysis.page_number;
-            await updatePage(page.id, {
-              page_number: pageNum,
-              section: analysis.section,
-              headline: analysis.headline,
-              tags: analysis.tags,
-              status: 'analysed',
-            });
-            return { idx, page, analysis, pageNum };
-          });
+            const page = sortedPages[idx];
+            return blob ? new File([blob], page.filename, { type: 'application/pdf' }) : null;
+          })
+          .filter(Boolean);
 
-          retryResults.forEach((r, i) => {
-            const idx = retryIndices[i];
-            if (r.status === 'fulfilled') {
-              const { page, analysis, pageNum } = r.value;
-              analyzedPages[idx] = { ...page, page_number: pageNum, section: analysis.section, headline: analysis.headline };
-              addLog(`  p${pageNum ?? '?'} [${analysis.section}] "${(analysis.headline || '').substring(0, 50)}" — ${page.filename} (retry OK)`);
-            } else {
-              addLog(`  [ERROR] ${sortedPages[idx].filename}: ${r.reason?.message || 'Unknown'} — defaulting to News`);
-              analyzedPages[idx] = { ...sortedPages[idx], section: sortedPages[idx].section || 'News' };
-            }
-          });
+        // Single HTTP round trip — backend processes all in parallel
+        const batchResults = await analyzeAllPages(batchFiles);
+
+        let resultIdx = 0;
+        for (const idx of needsAI) {
+          const page = sortedPages[idx];
+          const result = batchResults[resultIdx++];
+
+          if (!result || result.method === 'error') {
+            addLog(`  [WARN] ${page.filename}: AI failed — defaulting to News`);
+            analyzedPages[idx] = { ...page, section: page.section || 'News', headline: '' };
+          } else {
+            const pageNum = extractPageNumberFromFilename(page.filename) ?? result.page_number;
+            analyzedPages[idx] = {
+              ...page,
+              page_number: pageNum,
+              section: result.section,
+              headline: result.headline || '',
+              tags: result.tags || [],
+            };
+            addLog(`  p${pageNum ?? '?'} [${result.section}] "${(result.headline || '').substring(0, 50)}" — ${page.filename} (AI)`);
+            updatePage(page.id, {
+              page_number: pageNum,
+              section: result.section,
+              headline: result.headline,
+              tags: result.tags,
+              status: 'analysed',
+            }).catch(() => {});
+          }
         }
+      } else {
+        addLog('All pages classified without AI — no API calls needed.');
       }
 
-      // Fill any remaining nulls (shouldn't happen, but safety net)
+      // Safety net — fill any remaining nulls
       analyzedPages.forEach((p, idx) => {
         if (!p) analyzedPages[idx] = { ...sortedPages[idx], section: 'News' };
       });
 
-      addLog(`Analysis complete: ${sortedPages.length} pages classified (${skippedCount} by filename, ${needsAI.length} by AI)`);
+      addLog(`Analysis complete: ${sortedPages.length} pages classified`);
       updateStep(2, 'done', Date.now() - start);
 
       // ── Step 3: Split by Section ────────────────────────────────────
@@ -389,16 +400,21 @@ export default function Pipeline() {
         sectionGroups[section].push({ page, blobIndex: idx });
       });
 
+      // Merge all sections in parallel — each section is independent
       const sectionOutputs = {};
-      for (const [section, items] of Object.entries(sectionGroups)) {
-        const sectionBlobs = items.map(item => pdfBlobs[item.blobIndex]).filter(Boolean);
-        if (sectionBlobs.length > 0) {
+      const mergeResults = await Promise.all(
+        Object.entries(sectionGroups).map(async ([section, items]) => {
+          const sectionBlobs = items.map(item => pdfBlobs[item.blobIndex]).filter(Boolean);
+          if (sectionBlobs.length === 0) return null;
           const sectionBytes = await mergePdfs(sectionBlobs);
           const filename = SECTION_FILENAME_MAP[section] || `${section.toLowerCase().replace(/[^a-z0-9]/g, '')}.pdf`;
-          sectionOutputs[section] = { bytes: sectionBytes, filename };
-          addLog(`  ${section}: ${sectionBlobs.length} pages → ${filename}`);
-        }
-      }
+          return { section, bytes: sectionBytes, filename, count: sectionBlobs.length };
+        })
+      );
+      mergeResults.filter(Boolean).forEach(({ section, bytes, filename, count }) => {
+        sectionOutputs[section] = { bytes, filename };
+        addLog(`  ${section}: ${count} pages → ${filename}`);
+      });
 
       updateStep(3, 'done', Date.now() - start);
 
@@ -409,22 +425,36 @@ export default function Pipeline() {
 
       const storagePaths = {};
 
-      // Upload full newspaper
-      const fullPaperPath = `${todayStr}/full_paper.pdf`;
-      await uploadToStorage('outputs', fullPaperPath, new Blob([fullPaperBytes], { type: 'application/pdf' }));
-      storagePaths.full_paper = fullPaperPath;
-      addLog('  Uploaded full_paper.pdf');
+      // Build upload task list: full paper first, then all sections
+      const uploadTasks = [
+        {
+          key: 'full_paper',
+          path: `${todayStr}/full_paper.pdf`,
+          bytes: fullPaperBytes,
+          name: 'full_paper.pdf',
+        },
+        ...Object.entries(sectionOutputs).map(([section, { bytes, filename }]) => ({
+          key: section.toLowerCase().replace(/[^a-z0-9]/g, ''),
+          path: `${todayStr}/${filename}`,
+          bytes,
+          name: filename,
+        })),
+      ];
 
-      // Upload each section PDF
-      for (const [section, { bytes, filename }] of Object.entries(sectionOutputs)) {
-        const path = `${todayStr}/${filename}`;
-        const key = section.toLowerCase().replace(/[^a-z0-9]/g, '');
-        await uploadToStorage('outputs', path, new Blob([bytes], { type: 'application/pdf' }));
-        storagePaths[key] = path;
-        addLog(`  Uploaded ${filename}`);
+      // Upload 3 at a time — faster than sequential, avoids ERR_HTTP2_PROTOCOL_ERROR
+      const UPLOAD_CONCURRENCY = 3;
+      for (let i = 0; i < uploadTasks.length; i += UPLOAD_CONCURRENCY) {
+        const batch = uploadTasks.slice(i, i + UPLOAD_CONCURRENCY);
+        await Promise.all(
+          batch.map(async ({ key, path, bytes, name }) => {
+            await uploadToStorage('outputs', path, new Blob([bytes], { type: 'application/pdf' }));
+            storagePaths[key] = path;
+            addLog(`  Uploaded ${name}`);
+          })
+        );
       }
 
-      addLog(`All ${1 + Object.keys(sectionOutputs).length} PDFs uploaded`);
+      addLog(`All ${uploadTasks.length} PDFs uploaded`);
       updateStep(4, 'done', Date.now() - start);
 
       // ── Step 5: Publish Edition ─────────────────────────────────────

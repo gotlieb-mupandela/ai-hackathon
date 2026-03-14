@@ -33,7 +33,7 @@ Extract the following four pieces of information:
 
 2. SECTION
    FIRST: Look at the TOP of the page for a section keyword banner or header label. It will say one of:
-   Sport, Business, Vibez!, AgriToday, News, or Solzi.
+   Sport, Business, Vibez!, AgriToday, or News.
    Use that label directly if you see it.
 
    If no section keyword is visible at the top, classify by content:
@@ -42,9 +42,8 @@ Extract the following four pieces of information:
    - "Business"  — economy, finance, companies, NAD/N$, markets, trade, investment
    - "Vibez!"    — entertainment, celebrities, music, fashion, lifestyle, arts, culture
    - "AgriToday" — farming, agriculture, livestock, crops, irrigation, rural development
-   - "Solzi"     — community news, social affairs, human interest, local stories
 
-   IMPORTANT: These are the ONLY six valid sections. Return exactly one of the values above.
+   IMPORTANT: These are the ONLY five valid sections. Return exactly one of the values above.
 
 3. HEADLINE
    - Copy the single largest, most prominent headline exactly as it appears on the page.
@@ -61,7 +60,7 @@ Respond with ONLY a valid JSON object. No markdown, no explanation, no extra tex
   "tags": ["football", "COSAFA", "NFA", "Namibia", "victory"]
 }"""
 
-VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday", "News", "Solzi"}
+VALID_SECTIONS = {"Sport", "Business", "Vibez!", "AgriToday", "News"}
 
 SECTION_ALIASES = {
     "sport": "Sport",
@@ -84,11 +83,6 @@ SECTION_ALIASES = {
     "politics": "News",
     "national": "News",
     "general": "News",
-    "solzi": "Solzi",
-    "community": "Solzi",
-    "social": "Solzi",
-    "human interest": "Solzi",
-    "local": "Solzi",
 }
 
 # Gemini fallback client (only used when OpenRouter key is absent)

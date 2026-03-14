@@ -11,7 +11,6 @@ const CATEGORIES = [
   { key: 'business',   label: 'NewEra Business' },
   { key: 'vibez',      label: 'NewEra Vibez!' },
   { key: 'agritoday',  label: 'NewEra AgriToday' },
-  { key: 'solzi',      label: 'NewEra Solzi' },
 ];
 
 // Maps storage key → display label
@@ -22,7 +21,6 @@ const KEY_LABEL_MAP = {
   business:   'NewEra Business',
   vibez:      'NewEra Vibez!',
   agritoday:  'NewEra AgriToday',
-  solzi:      'NewEra Solzi',
 };
 
 // Maps storage key → sections map key (as saved by pipeline)
@@ -32,7 +30,6 @@ const KEY_SECTION_MAP = {
   business:  'Business',
   vibez:     'Vibez!',
   agritoday: 'AgriToday',
-  solzi:     'Solzi',
 };
 
 function buildEditionCards(editions) {

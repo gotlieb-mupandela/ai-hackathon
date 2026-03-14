@@ -145,7 +145,6 @@ async function sendToAllSubscribers(editionDate, supabaseUrl) {
     business:   'business.pdf',
     vibez:      'vibez.pdf',
     agritoday:  'agritoday.pdf',
-    solzi:      'solzi.pdf',
   };
 
   const sectionLabelMap = {
@@ -155,7 +154,6 @@ async function sendToAllSubscribers(editionDate, supabaseUrl) {
     business:   'NewEra Business',
     vibez:      'NewEra Vibez!',
     agritoday:  'NewEra AgriToday',
-    solzi:      'NewEra Solzi',
   };
 
   let sent   = 0;
