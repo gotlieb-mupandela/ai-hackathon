@@ -1,6 +1,9 @@
 /**
  * Local WhatsApp agent using whatsapp-web.js
  * 100% free, no API keys, connects via your real WhatsApp Web
+ *
+ * Downloads each subscriber's section PDFs from Supabase, password-protects
+ * them via the backend, and sends them as file attachments on WhatsApp.
  */
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
@@ -34,19 +37,18 @@ const client = new Client({
   },
 });
 
-// Show QR code once on first run
 client.on('qr', qr => {
   console.log('\n=== SCAN THIS QR CODE WITH YOUR WHATSAPP ===\n');
   qrcode.generate(qr, { small: true });
-  console.log('\nOpen WhatsApp on your phone → Settings → Linked Devices → Link a Device → Scan QR\n');
+  console.log('\nOpen WhatsApp on your phone > Settings > Linked Devices > Link a Device > Scan QR\n');
 });
 
 client.on('authenticated', () => {
-  console.log('✓ WhatsApp authenticated successfully');
+  console.log('WhatsApp authenticated successfully');
 });
 
 client.on('ready', () => {
-  console.log('✓ WhatsApp connected and ready to send messages!');
+  console.log('WhatsApp connected and ready to send messages!');
 });
 
 client.on('auth_failure', msg => {
@@ -57,91 +59,50 @@ client.on('disconnected', reason => {
   console.log('WhatsApp disconnected:', reason);
 });
 
-/**
- * Generate a fresh 6-digit one-time PIN.
- * A new PIN is created for each subscriber on every edition send.
- */
-function generateOTP() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
+const sectionLabelMap = {
+  full_paper: 'Full Newspaper',
+  news:       'NewEra News',
+  sport:      'NewEra Sport',
+  business:   'NewEra Business',
+  vibez:      'NewEra Vibez!',
+  agritoday:  'NewEra AgriToday',
+};
+
+const sectionFileMap = {
+  full_paper: 'full_paper.pdf',
+  news:       'news.pdf',
+  sport:      'sport.pdf',
+  business:   'business.pdf',
+  vibez:      'vibez.pdf',
+  agritoday:  'agritoday.pdf',
+};
 
 /**
- * Fetch a one-time-PIN-protected copy of a PDF from the backend.
- * Backend downloads from Supabase and encrypts with the OTP before returning.
- *
- * @param {string} pdfUrl - Public Supabase storage URL
- * @param {string} otp    - One-time PIN for this edition send
- * @returns {Promise<Buffer>} - Encrypted PDF bytes
+ * Fetch a password-protected PDF from the backend.
+ * The backend downloads the original from Supabase, encrypts it, and returns bytes.
  */
-async function fetchProtectedPdf(pdfUrl, otp) {
-  const response = await fetch(`${BACKEND_URL}/protect-pdf`, {
+async function fetchProtectedPdf(supabaseUrl, editionDate, sectionKey, password) {
+  const filename = sectionFileMap[sectionKey] || 'full_paper.pdf';
+  const pdfUrl = `${supabaseUrl}/storage/v1/object/public/outputs/${editionDate}/${filename}`;
+
+  const resp = await fetch(`${BACKEND_URL}/protect-pdf`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: pdfUrl, password: otp }),
+    body: JSON.stringify({ url: pdfUrl, password }),
   });
 
-  if (!response.ok) {
-    throw new Error(`protect-pdf failed: ${response.status} ${response.statusText}`);
+  if (!resp.ok) {
+    throw new Error(`protect-pdf failed (${resp.status}): ${await resp.text()}`);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const arrayBuf = await resp.arrayBuffer();
+  return Buffer.from(arrayBuf);
 }
 
 /**
- * Send the subscriber's one-time PIN as a plain text WhatsApp message.
- * This arrives before the PDF so they have the PIN ready when they open it.
- *
- * @param {string} phone       - Clean phone number with country code
- * @param {string} otp         - One-time PIN
- * @param {string} editionDate - Edition date string
- * @param {number} sectionCount - How many PDFs are about to follow
- */
-async function sendOTPMessage(phone, otp, editionDate, sectionCount) {
-  const chatId = `${phone}@c.us`;
-  const message =
-    `*New Era Edition — ${editionDate}*\n\n` +
-    `Your one-time PIN for today's edition:\n\n` +
-    `*${otp}*\n\n` +
-    `${sectionCount} PDF(s) follow.\n\n` +
-    `*How to open:*\n` +
-    `1. Tap the PDF file below\n` +
-    `2. Tap the download icon or "Open in..." button\n` +
-    `3. Open with *Adobe Acrobat*, *WPS Office*, or your phone's *Files* app\n` +
-    `4. Enter the PIN above when asked for a password\n\n` +
-    `This PIN is valid for today's edition only and cannot be reused.`;
-
-  await client.sendMessage(chatId, message);
-  console.log(`  PIN sent to ${phone}: ${otp}`);
-}
-
-/**
- * Send a single OTP-protected PDF to a subscriber.
- *
- * @param {string} phone       - Clean phone number with country code
- * @param {string} pdfUrl      - Public Supabase URL to the PDF
- * @param {string} otp         - One-time PIN (same across all sections for this subscriber/edition)
- * @param {string} sectionLabel - Human-readable section name for the caption
- * @param {string} editionDate - Edition date string
- */
-async function sendProtectedPDF(phone, pdfUrl, otp, sectionLabel, editionDate) {
-  const chatId = `${phone}@c.us`;
-
-  const pdfBytes = await fetchProtectedPdf(pdfUrl, otp);
-  const base64   = pdfBytes.toString('base64');
-  const media    = new MessageMedia('application/pdf', base64, `NewEra_${editionDate}_${sectionLabel}.pdf`);
-  const caption  = `*${sectionLabel}* — use PIN *${otp}* to open`;
-
-  await client.sendMessage(chatId, media, { caption });
-  console.log(`  Protected PDF sent to ${phone} (${sectionLabel})`);
-}
-
-/**
- * Send OTP-protected, section-specific PDFs to all subscribers.
- * Each subscriber gets a unique OTP per edition — generated fresh every send.
- *
- * @param {string} editionDate - Edition date (YYYY-MM-DD)
- * @param {string} supabaseUrl - Supabase project URL
+ * Send password-protected PDF files to all subscribers.
+ * Each subscriber gets their preferred sections as PDF attachments
+ * along with a text message containing their password.
  */
 async function sendToAllSubscribers(editionDate, supabaseUrl) {
   const subscribersPath = path.join(__dirname, '..', 'backend', 'subscribers.json');
@@ -149,69 +110,56 @@ async function sendToAllSubscribers(editionDate, supabaseUrl) {
 
   const numbers     = data.numbers     || [];
   const preferences = data.preferences || {};
+  const passwords   = data.passwords   || {};
 
   if (numbers.length === 0) {
     console.log('No subscribers found');
     return { sent: 0, failed: 0 };
   }
 
-  const sectionFileMap = {
-    full_paper: 'full_paper.pdf',
-    news:       'news.pdf',
-    sport:      'sport.pdf',
-    business:   'business.pdf',
-    vibez:      'vibez.pdf',
-    agritoday:  'agritoday.pdf',
-  };
-
-  const sectionLabelMap = {
-    full_paper: 'Full Newspaper',
-    news:       'NewEra News',
-    sport:      'NewEra Sport',
-    business:   'NewEra Business',
-    vibez:      'NewEra Vibez!',
-    agritoday:  'NewEra AgriToday',
-  };
-
   let sent   = 0;
   let failed = 0;
 
   for (const phone of numbers) {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
-    const sections   = preferences[phone] || ['full_paper'];
-
-    // Generate a fresh one-time PIN for this subscriber for this edition.
-    // All sections for the same subscriber share the same OTP in one send.
-    const otp = generateOTP();
+    const chatId = `${cleanPhone}@c.us`;
+    const sections = preferences[phone] || ['full_paper'];
+    const password = passwords[phone] || '000000';
 
     try {
-      // Step 1: Send the PIN as a plain text message first
-      await sendOTPMessage(cleanPhone, otp, editionDate, sections.length);
-      await new Promise(r => setTimeout(r, 1500));
+      const sectionLabels = sections.map(s => sectionLabelMap[s] || s).join(', ');
 
-      // Step 2: Send each section PDF locked with that OTP
-      for (const section of sections) {
-        const filename = sectionFileMap[section];
-        if (!filename) continue;
+      const introMessage =
+        `*New Era Edition — ${editionDate}*\n\n` +
+        `Your edition is ready!\n\n` +
+        `Sections: ${sectionLabels}\n` +
+        `Password to open: *${password}*\n\n` +
+        `The PDF(s) below are password-protected. Use the password above to open them.`;
 
-        const pdfUrl      = `${supabaseUrl}/storage/v1/object/public/outputs/${editionDate}/${filename}`;
-        const sectionLabel = sectionLabelMap[section] || section;
+      await client.sendMessage(chatId, introMessage);
+      console.log(`  Intro sent to ${phone} (password: ${password})`);
 
-        await sendProtectedPDF(cleanPhone, pdfUrl, otp, sectionLabel, editionDate);
+      for (const sectionKey of sections) {
+        try {
+          const pdfBuffer = await fetchProtectedPdf(supabaseUrl, editionDate, sectionKey, password);
+          const label = sectionLabelMap[sectionKey] || sectionKey;
+          const filename = `NewEra_${editionDate}_${sectionKey}.pdf`;
 
-        // Brief pause between sections for the same subscriber
-        await new Promise(r => setTimeout(r, 2000));
+          const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), filename);
+          await client.sendMessage(chatId, media, { caption: `${label}` });
+          console.log(`  PDF sent to ${phone}: ${label}`);
+        } catch (pdfErr) {
+          console.error(`  Failed to send ${sectionKey} to ${phone}:`, pdfErr.message);
+        }
       }
 
       sent++;
-      console.log(`✓ Completed ${phone} (OTP: ${otp}, ${sections.length} section(s))`);
+      console.log(`Completed ${phone} (${sections.length} section(s))`);
 
-      // Longer pause between different subscribers
-      await new Promise(r => setTimeout(r, 4000));
-
+      await new Promise(r => setTimeout(r, 3000));
     } catch (err) {
       failed++;
-      console.error(`✗ Failed to send to ${phone}:`, err.message);
+      console.error(`Failed to send to ${phone}:`, err.message);
     }
   }
 
@@ -221,7 +169,6 @@ async function sendToAllSubscribers(editionDate, supabaseUrl) {
   return { sent, failed };
 }
 
-// Initialize WhatsApp client
 client.initialize();
 
 module.exports = { sendToAllSubscribers, client };

@@ -60,6 +60,25 @@ export const deduplicatePages = async (date) => {
   return res.data;
 };
 
+/**
+ * Stamp a single PDF page with a "Page N | Section" banner.
+ * @param {Blob|File} file - The PDF blob/file to stamp
+ * @param {number} pageNumber - The page number to display
+ * @param {string} section - The section name (e.g. "Business")
+ * @returns {Promise<Blob>} Stamped PDF as a Blob
+ */
+export const stampPage = async (file, pageNumber, section) => {
+  const formData = new FormData();
+  formData.append('file', file instanceof File ? file : new File([file], 'page.pdf', { type: 'application/pdf' }));
+  formData.append('page_number', String(pageNumber));
+  formData.append('section', section);
+  const res = await analyzer.post('/pipeline/stamp', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    responseType: 'arraybuffer',
+  });
+  return new Blob([res.data], { type: 'application/pdf' });
+};
+
 // ─── WhatsApp Subscribers (Python backend) ──────────────────
 
 export const getSubscribers = async () => {
@@ -319,7 +338,7 @@ export const deleteOutputPdf = async (date, storageKey, storagePath) => {
 };
 
 /**
- * Fetch all editions, newest first.
+ * Fetch only published editions that came through the pipeline (have storage_paths), newest first.
  */
 export const getEditions = async () => {
   const supabase = getSupabaseClient();
@@ -328,6 +347,8 @@ export const getEditions = async () => {
   const { data, error } = await supabase
     .from('editions')
     .select('*')
+    .eq('status', 'published')
+    .not('storage_paths', 'is', null)
     .order('date', { ascending: false });
 
   if (error) throw error;

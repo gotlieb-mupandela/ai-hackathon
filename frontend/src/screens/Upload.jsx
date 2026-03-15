@@ -14,6 +14,19 @@ import './Upload.css';
 
 const SECTIONS = ['News', 'Business', 'Sport', 'Vibez!', 'AgriToday'];
 
+/**
+ * Hardcoded page-number → section mapping for the New Era newspaper.
+ * Page numbers not listed here will fall through to SELECTO header detection.
+ */
+const PAGE_SECTION_MAP = {
+  8:  'Vibez!',
+  9:  'Business',
+  10: 'Business',
+  18: 'Sport',
+  19: 'Sport',
+  20: 'Sport',
+};
+
 const SECTION_COLORS = {
   News:      { bg: '#ede9fe', color: '#5b21b6' },
   Business:  { bg: '#dcfce7', color: '#166534' },
@@ -36,68 +49,32 @@ function detectSectionFromFilename(filename) {
   return null;
 }
 
-/**
- * Ordered keyword → section pairs used when reading text inside a PDF.
- * Most-specific terms first to avoid false positives.
- */
-const SECTION_TEXT_KEYWORDS = [
-  // AgriToday
-  ['agritoday','AgriToday'],['agri today','AgriToday'],['agriculture','AgriToday'],
-  ['farming','AgriToday'],['livestock','AgriToday'],['crop','AgriToday'],
-  ['harvest','AgriToday'],['irrigation','AgriToday'],['green scheme','AgriToday'],
-  ['farmer','AgriToday'],['cattle','AgriToday'],['maize','AgriToday'],
-  ['fertilizer','AgriToday'],['food security','AgriToday'],['rural','AgriToday'],
-  // Vibez!
-  ['vibez','Vibez!'],['entertainment','Vibez!'],['lifestyle','Vibez!'],
-  ['celebrity','Vibez!'],['fashion','Vibez!'],['music','Vibez!'],
-  ['concert','Vibez!'],['festival','Vibez!'],['album','Vibez!'],
-  ['drama','Vibez!'],['comedy','Vibez!'],['theatre','Vibez!'],
-  ['movie','Vibez!'],['film','Vibez!'],['nightlife','Vibez!'],
-  ['dance','Vibez!'],['culture','Vibez!'],
-  // Business
-  ['business','Business'],['tenders','Business'],['tender','Business'],
-  ['accountant','Business'],['accounting','Business'],['audit','Business'],
-  ['finance','Business'],['financial','Business'],['economy','Business'],
-  ['economic','Business'],['market','Business'],['investment','Business'],
-  ['corporate','Business'],['stock exchange','Business'],['nse','Business'],
-  ['taxation','Business'],['tax','Business'],['revenue','Business'],
-  ['budget','Business'],['banking','Business'],['insurance','Business'],
-  ['inflation','Business'],['gdp','Business'],['trade','Business'],
-  ['procurement','Business'],['quotation','Business'],['tender notice','Business'],
-  // Sport
-  ['sport','Sport'],['football','Sport'],['soccer','Sport'],['rugby','Sport'],
-  ['cricket','Sport'],['athletics','Sport'],['marathon','Sport'],['boxing','Sport'],
-  ['swimming','Sport'],['tennis','Sport'],['golf','Sport'],['basketball','Sport'],
-  ['volleyball','Sport'],['cycling','Sport'],['championship','Sport'],
-  ['league','Sport'],['tournament','Sport'],['fixture','Sport'],
-  ['stadium','Sport'],['goal','Sport'],['kick-off','Sport'],
-  ['handball','Sport'],['netball','Sport'],
-  // News (catch-all — last)
-  ['news','News'],['namibia','News'],['government','News'],['parliament','News'],
-  ['minister','News'],['president','News'],['police','News'],['court','News'],
-  ['crime','News'],['election','News'],['municipality','News'],['health','News'],
-  ['education','News'],['school','News'],['hospital','News'],['policy','News'],
-  ['legislation','News'],['region','News'],
-];
+// Generic keyword list removed — classification now relies solely on
+// SELECTO/Select headers to avoid false positives from article content.
 
 /**
- * Step 2 — classify from text inside the PDF.
- * "Select X" headers printed at the top of a page take highest priority.
+ * Step 2 — classify from the printed SELECTO header in the PDF.
+ * ONLY matches the authoritative "SELECTO{X}" / "Select {X}" headers.
+ * Generic keywords are intentionally excluded to avoid false positives
+ * (e.g. "rural" appearing in a News article being mis-tagged as AgriToday).
  */
 function classifySectionFromText(text) {
   const lower = text.toLowerCase();
 
-  // Highest priority: exact "Select <Section>" headers printed on the page
+  // Joined "SELECTO" headers (no space) — e.g. "SELECTONEWS | 3"
+  if (lower.includes('selectoagritoday')) return 'AgriToday';
+  if (lower.includes('selectovibez'))    return 'Vibez!';
+  if (lower.includes('selectobusiness')) return 'Business';
+  if (lower.includes('selectosport'))    return 'Sport';
+  if (lower.includes('selectonews'))     return 'News';
+
+  // Spaced "Select X" headers
   if (lower.includes('select agritoday') || lower.includes('select agri today')) return 'AgriToday';
   if (lower.includes('select vibez'))    return 'Vibez!';
   if (lower.includes('select business')) return 'Business';
   if (lower.includes('select sport'))    return 'Sport';
   if (lower.includes('select news'))     return 'News';
 
-  // Fallback: general keyword scan
-  for (const [keyword, section] of SECTION_TEXT_KEYWORDS) {
-    if (lower.includes(keyword)) return section;
-  }
   return null;
 }
 
@@ -285,10 +262,15 @@ export default function Upload() {
           uploaded_by: user?.email || 'unknown',
         });
 
-        // ── Auto-classify: filename first, then PDF text as fallback ──────
+        // ── Auto-classify: page number map → filename → PDF text header ──
         setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
-        const filenameSection = detectSectionFromFilename(file.name);
-        let detectedSection = filenameSection;
+        let detectedSection = null;
+        if (filenamePageNum != null && PAGE_SECTION_MAP[filenamePageNum]) {
+          detectedSection = PAGE_SECTION_MAP[filenamePageNum];
+        }
+        if (!detectedSection) {
+          detectedSection = detectSectionFromFilename(file.name);
+        }
         if (!detectedSection) {
           const pdfText = await extractTextFromPdf(file);
           detectedSection = classifySectionFromText(pdfText);
@@ -376,6 +358,31 @@ export default function Upload() {
       fetchPages();
     } catch (err) {
       showToast(`Failed to delete: ${err.message}`, 'error');
+    }
+  };
+
+  const [deletingAll, setDeletingAll] = useState(false);
+
+  const handleDeleteAll = async () => {
+    if (pages.length === 0) return;
+    if (!window.confirm(`Delete all ${pages.length} uploaded pages for today? This cannot be undone.`)) return;
+    setDeletingAll(true);
+    let deleted = 0;
+    try {
+      await Promise.all(
+        pages.map(async (page) => {
+          try {
+            await deletePage(page.id, page.storage_path);
+            deleted++;
+          } catch { /* continue with remaining */ }
+        })
+      );
+      showToast(`Deleted ${deleted} of ${pages.length} pages`, 'success');
+      fetchPages();
+    } catch (err) {
+      showToast(`Delete all failed: ${err.message}`, 'error');
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -471,7 +478,31 @@ export default function Upload() {
         <div className="file-list-section">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
             <h2 className="section-title" style={{ margin: 0 }}>{isDesigner ? 'My Uploaded Pages' : 'Uploaded Pages'}</h2>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{pages.length} pages</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{pages.length} pages</span>
+              <button
+                className="file-delete-btn"
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                title="Delete all uploaded pages for today"
+                style={{
+                  background: '#fef2f2', color: '#dc2626',
+                  border: '1px solid #fecaca', borderRadius: '6px',
+                  padding: '5px 12px', fontSize: '12px', fontWeight: '600',
+                  cursor: deletingAll ? 'not-allowed' : 'pointer',
+                  opacity: deletingAll ? 0.6 : 1,
+                  display: 'flex', alignItems: 'center', gap: '5px',
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                  <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+                </svg>
+                {deletingAll ? 'Deleting...' : 'Delete All'}
+              </button>
+            </div>
           </div>
           <div className="file-list">
             <div className="file-list-header" style={{ gridTemplateColumns: '2fr 0.6fr 1fr 1fr 0.5fr' }}>

@@ -1,0 +1,112 @@
+/* ── WhatsApp Page ─────────────────────────────────────────────────────── */
+
+.wa-root {
+  padding: 28px 32px 48px;
+  max-width: 900px;
+  margin: 0 auto;
+  animation: waEnter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes waEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.wa-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.wa-header-icon {
+  width: 50px;
+  height: 50px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #25d366, #128c7e);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px rgba(37, 211, 102, 0.25);
+}
+
+.wa-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.4px;
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+
+.wa-subtitle {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0;
+}
+
+/* ── Info Bar ─────────────────────────────────────────────────────────── */
+.wa-info-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.wa-info-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.65);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #475569;
+  transition: all 0.2s ease;
+}
+
+.wa-info-item:hover {
+  background: #fff;
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.wa-info-item svg {
+  color: #25d366;
+  flex-shrink: 0;
+}
+
+/* ── Panel Wrapper ────────────────────────────────────────────────────── */
+.wa-panel-wrap {
+  background: rgba(255,255,255,0.65);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.8);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+  transition: box-shadow 0.25s;
+}
+
+.wa-panel-wrap:hover {
+  box-shadow: 0 6px 20px rgba(0,0,0,0.05);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .wa-root {
+    padding: 20px 16px 40px;
+  }
+
+  .wa-info-bar {
+    flex-direction: column;
+  }
+}

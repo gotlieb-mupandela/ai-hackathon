@@ -44,7 +44,8 @@ function buildEditionCards(editions) {
 
       let pageCount = '—';
       if (key === 'full_paper') {
-        pageCount = edition.expected_pages || '—';
+        // Use actual page count from the pipeline pages array
+        pageCount = Array.isArray(edition.pages) ? edition.pages.length : (edition.expected_pages || '—');
       } else {
         const sectionKey = KEY_SECTION_MAP[key];
         const sectionPages = sectionKey && edition.sections?.[sectionKey];
@@ -243,11 +244,26 @@ export default function EPaperViewer() {
       {selectedCard && (
         <div className="pdf-modal-overlay" onClick={() => setSelectedCard(null)}>
           <div className="pdf-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="pdf-modal-header">
-              <div>
-                <div className="pdf-modal-title">{selectedCard.label}</div>
-                <div className="pdf-modal-sub">{selectedCard.date} · {selectedCard.filename}</div>
+
+            {/* Top bar */}
+            <div className="pdf-modal-topbar">
+              <div className="pdf-modal-brand">
+                <div className="pdf-modal-brand-logo">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="pdf-modal-title">{selectedCard.label}</div>
+                  <div className="pdf-modal-sub">
+                    {new Date(selectedCard.date + 'T00:00:00').toLocaleDateString('en-GB', {
+                      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+                    })}
+                    {selectedCard.pageCount !== '—' && ` · ${selectedCard.pageCount} pages`}
+                  </div>
+                </div>
               </div>
+
               <div className="pdf-modal-actions">
                 <a
                   href={selectedCard.url}
@@ -255,18 +271,24 @@ export default function EPaperViewer() {
                   className="pdf-download-btn"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
                   Download PDF
                 </a>
-                <button className="pdf-close-btn" onClick={() => setSelectedCard(null)}>
-                  <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <button className="pdf-close-btn" onClick={() => setSelectedCard(null)} title="Close">
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
             </div>
+
+            {/* PDF content */}
             <div className="pdf-viewer-frame">
               <PdfViewer url={selectedCard.url} />
             </div>
+
           </div>
         </div>
       )}

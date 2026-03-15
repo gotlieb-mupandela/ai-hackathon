@@ -218,28 +218,43 @@ def _send_via_agent(edition_date: str) -> dict:
 
 def _send_via_link_fallback(edition_date: str) -> dict:
     """
-    When the local agent is not running, log wa.me links so the admin
-    can click them manually to send.  Never hard-fails.
+    When the local agent is not running, generate one-time PINs and
+    log wa.me links so the admin can click them manually to send.
     """
     import urllib.parse
+    from pins import generate_pin
+
+    reader_url = os.getenv("READER_URL", "http://localhost:3001/reader")
 
     data = load_subscribers()
     numbers = data.get("numbers", [])
     if not numbers:
         return {"sent": 0, "failed": 0}
 
+    links = []
     for phone in numbers:
         sections = data.get("preferences", {}).get(phone, ["full_paper"])
-        message = _build_message(edition_date, sections)
+        pin = generate_pin(phone, edition_date, sections)
+        section_labels = [SECTION_LABEL_MAP.get(s, s) for s in sections]
+
+        message = (
+            f"*New Era Edition — {edition_date}*\n\n"
+            f"Your one-time reading PIN: *{pin}*\n\n"
+            f"Sections: {', '.join(section_labels)}\n\n"
+            f"Open this link to read:\n{reader_url}?pin={pin}\n\n"
+            f"This PIN can only be used once."
+        )
+
         clean = phone.lstrip("+").replace(" ", "").replace("-", "")
         link = f"https://wa.me/{clean}?text={urllib.parse.quote(message)}"
-        logger.info("WhatsApp manual link for %s: %s", phone, link)
+        links.append({"phone": phone, "link": link, "pin": pin, "sections": section_labels})
+        logger.info("WhatsApp manual link for %s (PIN: %s): %s", phone, pin, link)
 
     logger.warning(
         "WhatsApp agent not running — links logged above. "
         "Start the agent with: cd whatsapp-agent && node server.js"
     )
-    return {"sent": len(numbers), "failed": 0, "mode": "links_only"}
+    return {"sent": 0, "failed": 0, "links": links, "mode": "links_only"}
 
 
 def send_whatsapp_message(phone: str, edition_date: str, sections: list[str] = None) -> bool:

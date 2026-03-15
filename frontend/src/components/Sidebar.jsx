@@ -59,6 +59,11 @@ const DocsIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
   </svg>
 );
+const WhatsAppIcon = () => (
+  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+  </svg>
+);
 const AgentIcon = () => (
   <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
     <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1 1 .3 2.7-1.1 2.7H4.3c-1.4 0-2.1-1.7-1.1-2.7L4.6 15.3" />
@@ -161,6 +166,7 @@ export default function Sidebar() {
             <NavItem path="/upload"      label="Upload Portal" icon={<UploadIcon />} />
             <NavItem path="/pipeline"    label="Publish"       icon={<PublishIcon />} />
             <NavItem path="/agent"       label="AI Agent"      icon={<AgentIcon />} />
+            <NavItem path="/whatsapp"   label="WhatsApp"      icon={<WhatsAppIcon />} />
             <ManagementGroup />
             <NavItem path="/payments"    label="Payments"      icon={<PaymentsIcon />} />
             <NavItem path="/archive"     label="Archive"       icon={<ArchiveIcon />} />

@@ -9,3 +9,4 @@ ollama
 supabase
 requests
 pypdf
+reportlab

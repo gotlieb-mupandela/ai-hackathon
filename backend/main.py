@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 from supabase import create_client as _create_supabase_client
 
 from gemini import analyze_page, configure_gemini
+from pins import generate_pin, validate_pin, check_pin, cleanup_old_pins
 from whatsapp import (
     add_number,
     get_numbers,
@@ -63,7 +64,13 @@ configure_gemini()
 # ─── Section keyword map for PDF text extraction ──────────────────────────────
 # Order matters: more specific keywords first to avoid "news" matching "business news"
 _SECTION_TEXT_KEYWORDS: list[tuple[str, str]] = [
-    # ── "Select X" printed headers — highest priority ────────────────────
+    # ── "SELECTO X" joined headers (no space) — highest priority ─────────
+    ("selectoagritoday", "AgriToday"),
+    ("selectovibez",     "Vibez!"),
+    ("selectobusiness",  "Business"),
+    ("selectosport",     "Sport"),
+    ("selectonews",      "News"),
+    # ── "Select X" spaced headers ──────────────────────────────────────
     ("select agritoday", "AgriToday"),
     ("select agri today","AgriToday"),
     ("select vibez",     "Vibez!"),
@@ -201,16 +208,16 @@ def _detect_select_header(text: str) -> str | None:
     Returns the canonical section name, or None if no header is found.
     """
     lower = text.lower()
-    # Order matters: most-specific first
-    if "select agritoday" in lower or "select agri today" in lower:
+    # Match both spaced ("select news") and joined ("selectonews") header forms
+    if "selectoagritoday" in lower or "select agritoday" in lower or "select agri today" in lower:
         return "AgriToday"
-    if "select vibez" in lower:
+    if "selectovibez" in lower or "select vibez" in lower:
         return "Vibez!"
-    if "select business" in lower:
+    if "selectobusiness" in lower or "select business" in lower:
         return "Business"
-    if "select sport" in lower:
+    if "selectosport" in lower or "select sport" in lower:
         return "Sport"
-    if "select news" in lower:
+    if "selectonews" in lower or "select news" in lower:
         return "News"
     return None
 
@@ -259,7 +266,8 @@ def _extract_section_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
 def _extract_page_number_from_pdf_bytes(pdf_bytes: bytes) -> int:
     """
     Attempt to read the page number from embedded PDF text.
-    Looks for patterns like 'Page 5', 'p.5', or lone small integers near edges.
+    Matches header formats like 'SELECTONEWS | 3', 'Page 5', 'p.5',
+    or a lone '| N' pipe-delimited number.
     Returns 0 if not found.
     """
     import re
@@ -268,9 +276,14 @@ def _extract_page_number_from_pdf_bytes(pdf_bytes: bytes) -> int:
         if not reader.pages:
             return 0
         text = (reader.pages[0].extract_text() or "")
-        match = re.search(r'\bpage\s*(\d{1,3})\b', text, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
+        # "SELECTONEWS | 3" or "SELECT NEWS | 3" — pipe-delimited page number
+        pipe_match = re.search(r'\|\s*(\d{1,3})\b', text)
+        if pipe_match:
+            return int(pipe_match.group(1))
+        # "Page 5" / "page 5"
+        page_match = re.search(r'\bpage\s*(\d{1,3})\b', text, re.IGNORECASE)
+        if page_match:
+            return int(page_match.group(1))
     except Exception:
         pass
     return 0
@@ -336,31 +349,13 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
     has_real_text = len(extracted_text) > 50  # Scanned PDFs give <50 chars (just metadata)
 
     if has_real_text:
-        # Path A: Digital PDF — let DeepSeek read and reason about the text
-        logger.info("Text available (%d chars) — using DeepSeek for %s", len(extracted_text), filename)
-        tmp_pdf_path = None
-        tmp_img_path = None
+        # Path A: Digital PDF — send text directly to DeepSeek, NO image conversion needed.
+        # Skipping poppler saves ~3-5 seconds per page.
+        logger.info("Text available (%d chars) — text-only DeepSeek for %s", len(extracted_text), filename)
         try:
-            # Still need an image for page_number if not found in text
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
-                tmp_pdf.write(pdf_bytes)
-                tmp_pdf_path = tmp_pdf.name
-
-            images = convert_from_path(
-                tmp_pdf_path, dpi=120, first_page=1, last_page=1,
-                poppler_path=POPPLER_PATH, thread_count=2,
-            )
-            img = images[0] if images else None
-            if img:
-                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-                    img.save(tmp_img, "JPEG", quality=72, optimize=True)
-                    tmp_img.flush()
-                    os.fsync(tmp_img.fileno())
-                    tmp_img_path = tmp_img.name
-
             result = analyze_page(
-                tmp_img_path or "",
-                retries=2,
+                "",
+                retries=1,
                 extracted_text=extracted_text,
             )
             if not page_number and result.get("page_number"):
@@ -373,15 +368,8 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
 
         except Exception as exc:
             logger.warning("DeepSeek path failed for %s (%s) — falling back to vision", filename, exc)
-        finally:
-            for p in (tmp_pdf_path, tmp_img_path):
-                if p:
-                    try:
-                        os.unlink(p)
-                    except Exception:
-                        pass
 
-    # Path B: Scanned/image PDF — convert to high-quality image for Qwen VL 72B
+    # Path B: Scanned/image PDF — convert to lightweight image for vision model
     tmp_pdf_path = None
     tmp_img_path = None
     try:
@@ -389,27 +377,25 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
             tmp_pdf.write(pdf_bytes)
             tmp_pdf_path = tmp_pdf.name
 
-        # Higher DPI so text in the image is legible for the vision model
         images = convert_from_path(
-            tmp_pdf_path, dpi=150, first_page=1, last_page=1,
+            tmp_pdf_path, dpi=100, first_page=1, last_page=1,
             poppler_path=POPPLER_PATH, thread_count=2,
         )
         if not images:
             raise ValueError("Could not convert PDF to image")
 
         img = images[0]
-        # Keep up to 1400px — Qwen VL 72B needs to read the text clearly
-        MAX_DIM = 1400
+        MAX_DIM = 900
         if max(img.size) > MAX_DIM:
             img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-            img.save(tmp_img, "JPEG", quality=72, optimize=True)
+            img.save(tmp_img, "JPEG", quality=50, optimize=True)
             tmp_img.flush()
             os.fsync(tmp_img.fileno())
             tmp_img_path = tmp_img.name
 
-        result = analyze_page(tmp_img_path, retries=2, extracted_text="")
+        result = analyze_page(tmp_img_path, retries=1, extracted_text="")
         result["filename"]    = filename
         result["page_number"] = page_number or result.get("page_number", 0)
         result["method"]      = "vision"
@@ -421,7 +407,7 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
         return {
             "filename":    filename,
             "page_number": page_number,
-            "section":     "News",
+            "section":     None,
             "headline":    "",
             "tags":        [],
             "method":      "error",
@@ -457,7 +443,6 @@ async def analyze_pdf(file: UploadFile = File(...)):
             tmp_pdf.write(content)
             tmp_pdf_path = tmp_pdf.name
 
-        # Low DPI + small image = fast upload to vision API
         images = convert_from_path(
             tmp_pdf_path, dpi=100, first_page=1, last_page=1,
             poppler_path=POPPLER_PATH,
@@ -467,11 +452,9 @@ async def analyze_pdf(file: UploadFile = File(...)):
             raise ValueError("Could not convert PDF to image")
 
         img = images[0]
-
-        # Keep images small — AI only needs to read text, not pixel-perfect detail
         MAX_DIM = 900
         if max(img.size) > MAX_DIM:
-            img.thumbnail((MAX_DIM, MAX_DIM))
+            img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
             img.save(tmp_img, "JPEG", quality=45, optimize=True)
@@ -533,7 +516,7 @@ async def analyze_all_pages(files: list[UploadFile] = File(...)):
     # ThreadPoolExecutor is required because pdf2image (Poppler) and pypdf are
     # CPU/IO-bound blocking operations not suitable for asyncio directly.
     loop = asyncio.get_event_loop()
-    max_workers = min(len(file_data), 12)  # Cap at 12 to avoid overwhelming the API
+    max_workers = min(len(file_data), 16)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         tasks = [
@@ -551,7 +534,7 @@ async def analyze_all_pages(files: list[UploadFile] = File(...)):
             output.append({
                 "filename": filename,
                 "page_number": 0,
-                "section": "News",
+                "section": None,
                 "headline": "",
                 "tags": [],
                 "method": "error",
@@ -568,6 +551,83 @@ async def analyze_all_pages(files: list[UploadFile] = File(...)):
         len(output), text_count, vision_count, error_count,
     )
     return output
+
+
+# ─── PDF Page Stamping ───────────────────────────────────────────────────────
+
+
+def _stamp_pdf_bytes(pdf_bytes: bytes, page_number: int, section: str) -> bytes:
+    """Overlay a 'Page N | Section' banner on every page of the PDF."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import Color
+    from reportlab.pdfgen.canvas import Canvas as RLCanvas
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+
+    for pg in reader.pages:
+        box = pg.mediabox
+        pg_w = float(box.width)
+        pg_h = float(box.height)
+
+        overlay_buf = io.BytesIO()
+        c = RLCanvas(overlay_buf, pagesize=(pg_w, pg_h))
+
+        label = f"Page {page_number}  |  {section}"
+        font_size = 8
+        c.setFont("Helvetica-Bold", font_size)
+
+        text_w = c.stringWidth(label, "Helvetica-Bold", font_size)
+        pad_x, pad_y = 6, 3
+        banner_w = text_w + pad_x * 2
+        banner_h = font_size + pad_y * 2
+
+        bx = pg_w - banner_w - 10
+        by = pg_h - banner_h - 10
+
+        c.setFillColor(Color(0, 0, 0, alpha=0.55))
+        c.roundRect(bx, by, banner_w, banner_h, 3, fill=1, stroke=0)
+
+        c.setFillColor(Color(1, 1, 1, alpha=1))
+        c.drawString(bx + pad_x, by + pad_y + 1, label)
+
+        c.showPage()
+        c.save()
+
+        overlay_reader = PdfReader(io.BytesIO(overlay_buf.getvalue()))
+        pg.merge_page(overlay_reader.pages[0])
+        writer.add_page(pg)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+@app.post("/pipeline/stamp")
+async def stamp_single_page(
+    file: UploadFile = File(...),
+    page_number: int = Form(...),
+    section: str = Form(...),
+):
+    """Stamp a single PDF with a 'Page N | Section' banner and return it."""
+    raw = await file.read()
+    if len(raw) < 10:
+        raise HTTPException(status_code=400, detail="Empty or invalid PDF")
+
+    loop = asyncio.get_running_loop()
+    try:
+        stamped = await loop.run_in_executor(
+            None, _stamp_pdf_bytes, raw, page_number, section
+        )
+    except Exception as exc:
+        logger.error("stamp failed (page %d, %s): %s", page_number, section, exc)
+        raise HTTPException(status_code=500, detail=f"Stamp failed: {exc}")
+
+    return Response(
+        content=stamped,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="page_{page_number}.pdf"'},
+    )
 
 
 # ─── PDF Protection Endpoint ─────────────────────────────────────────────────
@@ -617,6 +677,222 @@ async def protect_pdf(body: ProtectPdfBody):
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="edition_protected.pdf"'},
     )
+
+
+# ─── One-Time PIN Endpoints ──────────────────────────────────
+
+
+class GeneratePinBody(BaseModel):
+    phone: str
+    edition_date: str
+    sections: list[str]
+
+
+class ValidatePinBody(BaseModel):
+    pin: str
+
+
+@app.post("/pin/generate")
+async def api_generate_pin(body: GeneratePinBody):
+    """Generate a unique one-time PIN for a subscriber/edition combo."""
+    pin = generate_pin(body.phone, body.edition_date, body.sections)
+    return {"pin": pin, "phone": body.phone, "edition_date": body.edition_date}
+
+
+@app.post("/pin/validate")
+async def api_validate_pin(body: ValidatePinBody):
+    """
+    Validate and consume a one-time PIN.
+    If valid: returns the edition PDF bytes (streamed, one-time only).
+    If invalid or already used: returns 403.
+    """
+    import requests as _req
+
+    record = validate_pin(body.pin)
+    if not record:
+        raise HTTPException(status_code=403, detail="PIN is invalid or has already been used")
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    edition_date = record["edition_date"]
+    sections = record.get("sections", ["full_paper"])
+
+    section_file_map = {
+        "full_paper": "full_paper.pdf",
+        "news": "news.pdf",
+        "sport": "sport.pdf",
+        "business": "business.pdf",
+        "vibez": "vibez.pdf",
+        "agritoday": "agritoday.pdf",
+    }
+    section_label_map = {
+        "full_paper": "Full Newspaper",
+        "news": "News",
+        "sport": "Sport",
+        "business": "Business",
+        "vibez": "Vibez!",
+        "agritoday": "AgriToday",
+    }
+
+    pdf_list = []
+    for sec in sections:
+        filename = section_file_map.get(sec)
+        if not filename:
+            continue
+        url = f"{supabase_url}/storage/v1/object/public/outputs/{edition_date}/{filename}"
+        try:
+            resp = _req.get(url, timeout=30)
+            resp.raise_for_status()
+            pdf_list.append({
+                "section": sec,
+                "label": section_label_map.get(sec, sec),
+                "filename": filename,
+                "size": len(resp.content),
+            })
+        except Exception as exc:
+            logger.warning("Could not fetch %s for PIN validation: %s", url, exc)
+
+    return {
+        "valid": True,
+        "edition_date": edition_date,
+        "sections": pdf_list,
+        "phone": record["phone"],
+    }
+
+
+@app.post("/pin/fetch-pdf")
+async def api_fetch_pdf_with_pin(body: ValidatePinBody):
+    """
+    Fetch a specific section PDF after PIN has been validated.
+    The PIN must already be consumed (used=True) for this to work,
+    but we allow fetching within a short session window.
+    """
+    import requests as _req
+
+    pin = body.pin.strip()
+    # Read the record directly — it should be recently consumed
+    from pins import _load
+    store = _load()
+    record = store.get(pin)
+
+    if not record:
+        raise HTTPException(status_code=403, detail="PIN not found")
+    if not record.get("used"):
+        raise HTTPException(status_code=403, detail="PIN has not been validated yet")
+
+    # Allow PDF fetching within 24 hours of PIN validation
+    import time as _time
+    used_at = record.get("used_at", 0)
+    if _time.time() - used_at > 86400:
+        raise HTTPException(status_code=403, detail="Session expired. Request a new PIN.")
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    edition_date = record["edition_date"]
+    sections = record.get("sections", ["full_paper"])
+
+    section_file_map = {
+        "full_paper": "full_paper.pdf",
+        "news": "news.pdf",
+        "sport": "sport.pdf",
+        "business": "business.pdf",
+        "vibez": "vibez.pdf",
+        "agritoday": "agritoday.pdf",
+    }
+
+    # Return the first section's PDF (frontend requests one at a time via query param)
+    from fastapi import Query
+    # We'll use a simple approach: combine all section PDFs into context
+    first_sec = sections[0] if sections else "full_paper"
+    filename = section_file_map.get(first_sec, "full_paper.pdf")
+    url = f"{supabase_url}/storage/v1/object/public/outputs/{edition_date}/{filename}"
+
+    try:
+        resp = _req.get(url, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not download PDF: {exc}")
+
+    return Response(
+        content=resp.content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store, no-cache, must-revalidate, private, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "SAMEORIGIN",
+            "Content-Security-Policy": "default-src 'none'; script-src 'none'; object-src 'none'",
+        },
+    )
+
+
+@app.get("/pin/stream/{pin}/{section}")
+async def stream_pdf_by_pin(pin: str, section: str):
+    """
+    Stream a single section PDF for a consumed PIN.
+    Called by the frontend reader to display in-browser.
+    30-minute session window after PIN validation.
+    """
+    import requests as _req
+    import time as _time
+
+    from pins import _load
+    store = _load()
+    record = store.get(pin.strip())
+
+    if not record:
+        raise HTTPException(status_code=403, detail="PIN not found")
+    if not record.get("used"):
+        raise HTTPException(status_code=403, detail="PIN not validated")
+
+    used_at = record.get("used_at", 0)
+    if _time.time() - used_at > 86400:
+        raise HTTPException(status_code=403, detail="Session expired")
+
+    if section not in record.get("sections", []):
+        raise HTTPException(status_code=403, detail="Section not authorized for this PIN")
+
+    section_file_map = {
+        "full_paper": "full_paper.pdf",
+        "news": "news.pdf",
+        "sport": "sport.pdf",
+        "business": "business.pdf",
+        "vibez": "vibez.pdf",
+        "agritoday": "agritoday.pdf",
+    }
+
+    filename = section_file_map.get(section, "full_paper.pdf")
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    url = f"{supabase_url}/storage/v1/object/public/outputs/{record['edition_date']}/{filename}"
+
+    try:
+        resp = _req.get(url, timeout=30)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"PDF fetch failed: {exc}")
+
+    return Response(
+        content=resp.content,
+        media_type="application/pdf",
+        headers={
+            # inline keeps it in-browser; no filename hint makes "Save As" unhelpful
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-store, no-cache, must-revalidate, private, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            # Restrict embedding to same origin only
+            "X-Frame-Options": "SAMEORIGIN",
+            "Content-Security-Policy": "default-src 'none'; script-src 'none'; object-src 'none'",
+        },
+    )
+
+
+# Cleanup old PINs on startup
+try:
+    removed = cleanup_old_pins(48)
+    if removed:
+        logger.info("Cleaned up %d expired PINs", removed)
+except Exception:
+    pass
 
 
 # ─── WhatsApp Subscriber Endpoints ──────────────────────────

@@ -18,6 +18,8 @@ import Payments from './screens/Payments';
 import Users from './screens/Users';
 import AIAgent from './screens/AIAgent';
 import Documentation from './screens/Documentation';
+import WhatsAppPage from './screens/WhatsApp';
+import PdfReader from './screens/PdfReader';
 import Login from './screens/Login';
 import './App.css';
 
@@ -92,6 +94,7 @@ function PrivateLayout() {
                 <Route path="/management/periods" element={<Periods />} />
                 <Route path="/payments" element={<Payments />} />
                 <Route path="/agent" element={<AIAgent />} />
+                <Route path="/whatsapp" element={<WhatsAppPage />} />
                 <Route path="/docs" element={<Documentation />} />
               </>
             )}
@@ -114,6 +117,7 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
+          <Route path="/reader" element={<PdfReader />} />
           <Route path="/*" element={<PrivateLayout />} />
         </Routes>
       </AuthProvider>

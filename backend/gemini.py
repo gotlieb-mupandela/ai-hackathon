@@ -238,7 +238,7 @@ def _classify_with_deepseek(text: str, image_path: str, api_key: str, retries: i
         try:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=payload, timeout=30,
+                headers=headers, json=payload, timeout=20,
             )
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
@@ -257,13 +257,9 @@ def _classify_with_deepseek(text: str, image_path: str, api_key: str, retries: i
         except json.JSONDecodeError as exc:
             last_error = exc
             logger.warning("DeepSeek non-JSON (attempt %d): %s", attempt + 1, exc)
-            if attempt < retries - 1:
-                time.sleep(0.5)
         except Exception as exc:
             last_error = exc
             logger.error("DeepSeek error (attempt %d): %s", attempt + 1, exc)
-            if attempt < retries - 1:
-                time.sleep(1)
 
     raise RuntimeError(f"DeepSeek classification failed after {retries} attempts: {last_error}")
 
@@ -277,18 +273,16 @@ def _analyze_with_vision(image_path: str, api_key: str, retries: int) -> dict:
     """
     model = os.getenv("OPENROUTER_VISION_MODEL", "qwen/qwen2.5-vl-72b-instruct:free")
 
-    # Prepare image — higher quality than before so text is readable
     img = Image.open(image_path)
     if img.mode in ("P", "RGBA", "L"):
         img = img.convert("RGB")
 
-    # Use 1400px max — enough to read newspaper text clearly
-    MAX_DIM = 1400
+    MAX_DIM = 900
     if max(img.size) > MAX_DIM:
         img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
 
     buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=72, optimize=True)
+    img.save(buf, "JPEG", quality=50, optimize=True)
     image_bytes = buf.getvalue()
     image_b64   = base64.b64encode(image_bytes).decode("utf-8")
     data_url    = f"data:image/jpeg;base64,{image_b64}"
@@ -321,7 +315,7 @@ def _analyze_with_vision(image_path: str, api_key: str, retries: int) -> dict:
         try:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=payload, timeout=120,
+                headers=headers, json=payload, timeout=45,
             )
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"].strip()
@@ -343,13 +337,9 @@ def _analyze_with_vision(image_path: str, api_key: str, retries: int) -> dict:
         except json.JSONDecodeError as exc:
             last_error = exc
             logger.warning("Non-JSON from vision model (attempt %d): %s", attempt + 1, exc)
-            if attempt < retries - 1:
-                time.sleep(1)
         except Exception as exc:
             last_error = exc
             logger.error("Vision model error (attempt %d): %s", attempt + 1, exc)
-            if attempt < retries - 1:
-                time.sleep(1)
 
     raise RuntimeError(f"Vision analysis failed after {retries} attempts: {last_error}")
 
