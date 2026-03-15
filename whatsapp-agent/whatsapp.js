@@ -9,8 +9,10 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
 
 const BACKEND_URL = 'http://localhost:8001';
+const AGENT_PORT  = 5000;
 
 const client = new Client({
   authStrategy: new LocalAuth(),
@@ -23,17 +25,19 @@ const client = new Client({
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
+      '--single-process',
       '--disable-gpu',
       '--disable-extensions',
       '--disable-background-networking',
       '--disable-default-apps',
+      '--disable-features=site-per-process',
       '--mute-audio',
     ],
-    timeout: 60000,
+    timeout: 120000,
   },
   webVersionCache: {
-    type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    type: 'local',
+    path: './.wwebjs_cache',
   },
 });
 
@@ -47,16 +51,8 @@ client.on('authenticated', () => {
   console.log('WhatsApp authenticated successfully');
 });
 
-client.on('ready', () => {
-  console.log('WhatsApp connected and ready to send messages!');
-});
-
 client.on('auth_failure', msg => {
   console.error('Authentication failed:', msg);
-});
-
-client.on('disconnected', reason => {
-  console.log('WhatsApp disconnected:', reason);
 });
 
 const sectionLabelMap = {
@@ -168,6 +164,45 @@ async function sendToAllSubscribers(editionDate, supabaseUrl) {
 
   return { sent, failed };
 }
+
+// ── HTTP server so the backend can check status and trigger sends ──
+let isReady = false;
+
+const app = express();
+app.use(express.json());
+
+app.get('/health', (req, res) => {
+  res.json({ status: isReady ? 'ready' : 'not_ready' });
+});
+
+app.post('/send', async (req, res) => {
+  if (!isReady) {
+    return res.status(503).json({ error: 'WhatsApp not connected yet' });
+  }
+  const { edition_date, supabase_url } = req.body;
+  if (!edition_date || !supabase_url) {
+    return res.status(400).json({ error: 'edition_date and supabase_url are required' });
+  }
+  try {
+    const result = await sendToAllSubscribers(edition_date, supabase_url);
+    res.json(result);
+  } catch (err) {
+    console.error('Send error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(AGENT_PORT, () => {
+  console.log(`WhatsApp agent HTTP server running on http://localhost:${AGENT_PORT}`);
+});
+
+client.on('ready', () => {
+  isReady = true;
+});
+
+client.on('disconnected', () => {
+  isReady = false;
+});
 
 client.initialize();
 

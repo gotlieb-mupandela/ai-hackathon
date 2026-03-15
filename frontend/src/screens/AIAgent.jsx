@@ -39,9 +39,23 @@ export default function AIAgent() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [offlineMode, setOfflineMode] = useState(false); // true when last response came from local LLM
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const todayStr = getTodayStr();
+
+  // Track browser online/offline status
+  useEffect(() => {
+    const onOnline  = () => setIsOffline(false);
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online',  onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online',  onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,12 +99,18 @@ export default function AIAgent() {
         context: 'editorial_operations',
       });
 
+      // Track whether response came from local offline LLM
+      if (response.offline) setOfflineMode(true);
+      else setOfflineMode(false);
+
       const botMessage = {
         id: Date.now() + 1,
         type: 'bot',
         text: response.answer || 'I\'m not sure how to answer that. Can you ask differently?',
         reasoning: response.reasoning,
         data: response.data,
+        offline: response.offline,
+        model: response.data?.model,
         timestamp: new Date(),
       };
 
@@ -109,8 +129,21 @@ export default function AIAgent() {
       <div className="agent-body">
         {/* Chat Area */}
         <div className="agent-chat-container">
+
+          {/* Offline / local-LLM banner */}
+          {(isOffline || offlineMode) && (
+            <div className={`agent-mode-banner ${offlineMode ? 'agent-mode-banner--offline' : 'agent-mode-banner--warning'}`}>
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728M15.536 8.464a5 5 0 010 7.072M3 3l18 18M10.584 10.587a2 2 0 002.828 2.83" />
+              </svg>
+              {offlineMode
+                ? 'No internet — switched to local Llama 3.2 (1B). Responses may be slower.'
+                : 'No internet detected — GPT-4.1 Mini unavailable, will switch to local Llama 3.2.'}
+            </div>
+          )}
+
           <div className="agent-messages">
-            {messages.map((msg, index) => (
+            {messages.map((msg) => (
               <div key={msg.id} className={`message-wrapper ${msg.type === 'user' ? 'message-wrapper--user' : 'message-wrapper--bot'}`}>
                 {msg.type === 'bot' && (
                   <div className="message-avatar bot-avatar">
@@ -120,10 +153,27 @@ export default function AIAgent() {
                 
                 <div className={`message-bubble message-bubble--${msg.type}`}>
                   <p className="message-text">{msg.text}</p>
-                  
-                  <span className="message-time">
-                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+                  <div className="message-meta">
+                    <span className="message-time">
+                      {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {msg.type === 'bot' && msg.offline && (
+                      <span className="message-mode-badge message-mode-badge--offline">
+                        <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728M15.536 8.464a5 5 0 010 7.072M3 3l18 18M10.584 10.587a2 2 0 002.828 2.83" />
+                        </svg>
+                        Offline · Llama 3.2
+                      </span>
+                    )}
+                    {msg.type === 'bot' && !msg.offline && msg.model && (
+                      <span className="message-mode-badge message-mode-badge--online">
+                        <svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="5"/>
+                        </svg>
+                        Online · GPT-4.1 Mini
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {msg.type === 'user' && (

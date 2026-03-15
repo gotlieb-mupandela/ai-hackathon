@@ -138,5 +138,35 @@
     "used": false,
     "created_at": 1773555682.432807,
     "used_at": null
+  },
+  "901981": {
+    "phone": "+264813401526",
+    "edition_date": "2026-03-15",
+    "sections": [
+      "full_paper"
+    ],
+    "used": false,
+    "created_at": 1773556597.9846113,
+    "used_at": null
+  },
+  "410638": {
+    "phone": "+264814859666",
+    "edition_date": "2026-03-15",
+    "sections": [
+      "agritoday"
+    ],
+    "used": false,
+    "created_at": 1773556598.019001,
+    "used_at": null
+  },
+  "995880": {
+    "phone": "+264813401526",
+    "edition_date": "2026-03-15",
+    "sections": [
+      "full_paper"
+    ],
+    "used": false,
+    "created_at": 1773557674.1074321,
+    "used_at": null
   }
 }

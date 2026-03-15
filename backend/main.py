@@ -1259,8 +1259,7 @@ class AgentQuery(BaseModel):
 @app.post("/agent/query")
 async def agent_query(body: AgentQuery):
     """
-    Query the AI Agent via OpenRouter (GLM-4.5-Air free model).
-    Falls back to Gemini if OpenRouter key is missing.
+    Query the AI Agent. Cloud first (GPT-4.1 Mini via OpenRouter), offline fallback to local Ollama.
     """
     import requests as _req
 
@@ -1270,104 +1269,114 @@ async def agent_query(body: AgentQuery):
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
         )
 
-        # Fetch live company data for context
-        pages_data    = supabase.table('pages').select('*').eq('edition_date', body.date).execute()
-        editions_data = supabase.table('editions').select('*').eq('date', body.date).execute()
+        # Fetch context data — only the fields we need, not full rows
+        loop = asyncio.get_running_loop()
+        pages_data, _ = await asyncio.gather(
+            loop.run_in_executor(None, lambda: supabase.table('pages')
+                .select('section')
+                .eq('edition_date', body.date)
+                .execute()),
+            loop.run_in_executor(None, lambda: supabase.table('editions')
+                .select('status,expected_pages')
+                .eq('date', body.date)
+                .execute()),
+        )
 
         pages_count = len(pages_data.data) if pages_data.data else 0
         sections: dict = {}
         if pages_data.data:
             for page in pages_data.data:
-                sec = page.get('section', 'Unknown')
+                sec = page.get('section') or 'Unclassified'
                 sections[sec] = sections.get(sec, 0) + 1
 
         system_prompt = (
-            f"You are the New Era Editorial AI — a professional, senior editorial operations assistant.\n"
-            f"Today is {body.date}. Today's edition has {pages_count} pages uploaded across these sections: {sections}.\n\n"
-            "Rules you must always follow:\n"
-            "1. Be concise. Answer in 2-4 sentences max unless a detailed breakdown is explicitly requested.\n"
-            "2. Be professional. Use clear, formal language suited to a newsroom environment.\n"
-            "3. Be direct. Lead with the answer, then supporting detail if needed.\n"
-            "4. Never expose raw JSON, internal data structures, or technical metadata in your reply.\n"
-            "5. If you don't have enough data to answer confidently, say so in one sentence.\n"
-            "6. Format multi-point answers as short bullet points, not numbered lists.\n\n"
-            "You assist with: edition status, section breakdowns, designer performance, subscriber trends, and publishing workflow."
+            f"You are the New Era Editorial AI assistant. Today: {body.date}. "
+            f"Edition: {pages_count} pages — {sections}. "
+            "Be concise (2-4 sentences), professional, and direct. "
+            "No raw JSON or technical metadata in replies. "
+            "Topics: edition status, sections, designers, subscribers, publishing workflow."
         )
 
-        answer_text = ""
-        model_used  = ""
+        answer_text  = ""
+        model_used   = ""
+        offline_mode = False
 
-        # ── 1. Try Ollama (local, free, private) ────────────────────────────
-        try:
-            import ollama as _ollama
-            # Use a lightweight model by default — overridable via OLLAMA_MODEL env var
-            ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
-            logger.info("Attempting agent query via Ollama (%s)", ollama_model)
-            _resp = _ollama.chat(
-                model=ollama_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": body.query},
-                ],
-                options={"num_predict": 256, "temperature": 0.3},
-            )
-            answer_text = _resp['message']['content'].strip()
-            model_used  = f"Ollama/{ollama_model}"
-            logger.info("Agent query handled by Ollama (%s)", ollama_model)
+        messages_payload = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": body.query},
+        ]
 
-        except Exception as ollama_exc:
-            logger.warning("Ollama unavailable (%s) — trying OpenRouter", ollama_exc)
+        # ── 1. Try OpenRouter — GPT-4.1 Mini (fast cloud model) ─────────────
+        openrouter_key   = os.getenv("OPENROUTER_API_KEY", "")
+        openrouter_model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+        if openrouter_key:
+            try:
+                resp = await loop.run_in_executor(None, lambda: _req.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://newera-editorial.app",
+                        "X-Title": "NewEra Editorial Agent",
+                    },
+                    json={
+                        "model": openrouter_model,
+                        "messages": messages_payload,
+                        "temperature": 0.3,
+                        "max_tokens": 200,
+                    },
+                    timeout=8,
+                ))
+                resp.raise_for_status()
+                answer_text = resp.json()["choices"][0]["message"]["content"].strip()
+                model_used  = openrouter_model
+                logger.info("Agent query handled by OpenRouter/%s", openrouter_model)
+            except Exception as or_exc:
+                logger.warning("OpenRouter failed (%s) — trying Gemini", or_exc)
 
-            # ── 2. Try OpenRouter ────────────────────────────────────────────
-            openrouter_key   = os.getenv("OPENROUTER_API_KEY", "")
-            openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
-            if openrouter_key:
-                try:
-                    resp = _req.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {openrouter_key}",
-                            "Content-Type": "application/json",
-                            "HTTP-Referer": "https://newera-editorial.app",
-                            "X-Title": "NewEra Editorial Agent",
-                        },
-                        json={
-                            "model": openrouter_model,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user",   "content": body.query},
-                            ],
-                            "temperature": 0.3,
-                            "max_tokens": 300,
-                        },
-                        timeout=60,
-                    )
-                    resp.raise_for_status()
-                    answer_text = resp.json()["choices"][0]["message"]["content"].strip()
-                    model_used  = openrouter_model
-                    logger.info("Agent query handled by OpenRouter/%s", openrouter_model)
-                except Exception as or_exc:
-                    logger.warning("OpenRouter failed (%s) — falling back to Gemini", or_exc)
-
-            # ── 3. Final fallback: Google Gemini ────────────────────────────
-            if not answer_text:
-                logger.info("Using Gemini as final fallback for agent query")
+        # ── 2. Try Google Gemini (cloud fallback) ────────────────────────────
+        if not answer_text:
+            try:
                 from google import genai as _genai
                 gemini_client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
-                gr = gemini_client.models.generate_content(
+                gr = await loop.run_in_executor(None, lambda: gemini_client.models.generate_content(
                     model="gemini-2.0-flash-lite",
                     contents=[f"System context:\n{system_prompt}\n\nUser query: {body.query}"],
-                    config=_genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=300),
-                )
+                    config=_genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=200),
+                ))
                 answer_text = (gr.text or "").strip()
                 model_used  = "gemini-2.0-flash-lite"
-                logger.info("Agent query handled by Gemini fallback")
+                logger.info("Agent query handled by Gemini")
+            except Exception as gemini_exc:
+                logger.warning("Gemini failed (%s) — falling back to local Ollama", gemini_exc)
+
+        # ── 3. Offline fallback: local Ollama llama3.2:1b ───────────────────
+        if not answer_text:
+            try:
+                import ollama as _ollama
+                ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+                logger.info("Cloud unavailable — using local Ollama (%s)", ollama_model)
+                _resp = await loop.run_in_executor(None, lambda: _ollama.chat(
+                    model=ollama_model,
+                    messages=messages_payload,
+                    options={"num_predict": 150, "temperature": 0.3},
+                ))
+                answer_text  = _resp['message']['content'].strip()
+                model_used   = f"Ollama/{ollama_model}"
+                offline_mode = True
+                logger.info("Agent query handled offline by Ollama (%s)", ollama_model)
+            except Exception as ollama_exc:
+                logger.error("All AI backends failed. Ollama error: %s", ollama_exc)
+                answer_text  = "I'm currently unable to connect to any AI service. Please check your internet connection or ensure Ollama is running locally."
+                model_used   = "none"
+                offline_mode = True
 
         logger.info("Agent query: %s", body.query[:100])
 
         return {
             "answer": answer_text,
             "reasoning": f"Analysis based on {pages_count} pages across {len(sections)} sections",
+            "offline": offline_mode,
             "data": {
                 "pages_uploaded": pages_count,
                 "sections": sections,
