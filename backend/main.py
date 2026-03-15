@@ -63,6 +63,13 @@ configure_gemini()
 # ─── Section keyword map for PDF text extraction ──────────────────────────────
 # Order matters: more specific keywords first to avoid "news" matching "business news"
 _SECTION_TEXT_KEYWORDS: list[tuple[str, str]] = [
+    # ── "Select X" printed headers — highest priority ────────────────────
+    ("select agritoday", "AgriToday"),
+    ("select agri today","AgriToday"),
+    ("select vibez",     "Vibez!"),
+    ("select business",  "Business"),
+    ("select sport",     "Sport"),
+    ("select news",      "News"),
     # ── AgriToday (most specific — must come first) ──────────────────────
     ("agritoday",        "AgriToday"),
     ("agri today",       "AgriToday"),
@@ -185,6 +192,49 @@ _SECTION_TEXT_KEYWORDS: list[tuple[str, str]] = [
 ]
 
 
+def _detect_select_header(text: str) -> str | None:
+    """
+    Detect the 'Select <Section>' header printed at the top of every
+    New Era sectioned page.  This is the ONLY authoritative signal —
+    it must NEVER be overridden by keyword matching or AI guessing.
+
+    Returns the canonical section name, or None if no header is found.
+    """
+    lower = text.lower()
+    # Order matters: most-specific first
+    if "select agritoday" in lower or "select agri today" in lower:
+        return "AgriToday"
+    if "select vibez" in lower:
+        return "Vibez!"
+    if "select business" in lower:
+        return "Business"
+    if "select sport" in lower:
+        return "Sport"
+    if "select news" in lower:
+        return "News"
+    return None
+
+
+def _detect_section_from_filename(filename: str) -> str | None:
+    """
+    Derive section from the PDF filename when the filename itself carries
+    a section keyword (e.g. 'Select Business p3.pdf', 'NE_sport_05.pdf').
+    Returns canonical section name, or None.
+    """
+    name = filename.replace(".pdf", "").replace(".PDF", "").lower()
+    if "agritoday" in name or "agri today" in name or "agri" in name:
+        return "AgriToday"
+    if "vibez" in name:
+        return "Vibez!"
+    if "business" in name:
+        return "Business"
+    if "sport" in name:
+        return "Sport"
+    if "news" in name:
+        return "News"
+    return None
+
+
 def _extract_section_from_pdf_bytes(pdf_bytes: bytes) -> str | None:
     """
     Try to extract a section keyword from the first page's embedded text.
@@ -239,6 +289,9 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
     """
     page_number = _extract_page_number_from_pdf_bytes(pdf_bytes)
 
+    # ── GUARD 1: Filename carries a section keyword ───────────────────────────
+    filename_section = _detect_section_from_filename(filename)
+
     # Always extract the full raw text — pass it to DeepSeek even if keyword matching misses it
     extracted_text = ""
     try:
@@ -248,6 +301,37 @@ def _process_one_page_sync(filename: str, pdf_bytes: bytes) -> dict:
             extracted_text = (reader.pages[0].extract_text() or "").strip()
     except Exception:
         pass
+
+    # ── GUARD 2: "Select <Section>" header printed on the page ───────────────
+    # This is the authoritative section marker used by New Era newspaper.
+    # It must NEVER be overridden by AI — return immediately.
+    header_section = _detect_select_header(extracted_text)
+    if header_section:
+        logger.info(
+            "Select-header '%s' detected — skipping AI for %s", header_section, filename
+        )
+        return {
+            "filename":    filename,
+            "page_number": page_number,
+            "section":     header_section,
+            "headline":    "",
+            "tags":        [],
+            "method":      "select_header",
+        }
+
+    # If filename gave us a clear section and text doesn't contradict, trust it
+    if filename_section and not extracted_text.strip():
+        logger.info(
+            "Filename section '%s' used (no embedded text) for %s", filename_section, filename
+        )
+        return {
+            "filename":    filename,
+            "page_number": page_number,
+            "section":     filename_section,
+            "headline":    "",
+            "tags":        [],
+            "method":      "filename",
+        }
 
     has_real_text = len(extracted_text) > 50  # Scanned PDFs give <50 chars (just metadata)
 

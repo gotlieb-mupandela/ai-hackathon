@@ -54,8 +54,9 @@ Your only job is to read the newspaper page text below and determine which of th
   • Vibez!    — entertainment, celebrities, music, fashion, movies, arts, concerts, lifestyle, culture
   • AgriToday — farming, agriculture, livestock, crops, harvest, irrigation, rural development, food security
 
-IMPORTANT RULES:
-- Pages with tender notices, financial reports, company announcements, or accounting content → Business
+STRICT RULES — follow in order:
+1. If the text contains "Select News", "Select Business", "Select Sport", "Select Vibez", or "Select AgriToday" — that IS the section. Return it immediately. No exceptions.
+2. Pages with tender notices, financial reports, company announcements, or accounting content → Business
 - Pages about athletes, match results, league tables, sports fixtures → Sport
 - Pages about musicians, actors, fashion, nightlife, events → Vibez!
 - Pages about farming, cattle, crops, green schemes → AgriToday
@@ -83,9 +84,10 @@ Determine the following four fields:
    - Return 0 if you cannot find it.
 
 2. SECTION — this is the most important field.
-   STEP 1: Look for a section banner or header at the TOP of the page. It will say one of:
-   Sport, Business, Vibez!, AgriToday, News
-   If you see it clearly, use that exact value.
+   STEP 1 (MANDATORY): Look for a section banner or header at the TOP of the page.
+   It will say ONE of: "Select News", "Select Business", "Select Sport", "Select Vibez",
+   "Select AgriToday" — OR just: Sport, Business, Vibez!, AgriToday, News.
+   If you see ANY of these, that is the section. Use it. Do NOT change it based on content.
 
    STEP 2: If no banner is visible, classify by reading the content:
    - "Business"  → tender notices, financial reports, company news, economy, tax, accounting, markets, tenders
@@ -134,13 +136,52 @@ def configure_gemini(api_key: str | None = None) -> None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
+_SELECT_HEADERS: list[tuple[str, str]] = [
+    ("select agritoday", "AgriToday"),
+    ("select agri today","AgriToday"),
+    ("select vibez",     "Vibez!"),
+    ("select business",  "Business"),
+    ("select sport",     "Sport"),
+    ("select news",      "News"),
+]
+
+
+def _check_select_header(text: str) -> str | None:
+    """
+    Return the section if the 'Select <Section>' header is found in the text.
+    This is an authoritative marker that must never be overridden by AI.
+    """
+    lower = text.lower()
+    for phrase, section in _SELECT_HEADERS:
+        if phrase in lower:
+            return section
+    return None
+
+
 def analyze_page(image_path: str, retries: int = 2, extracted_text: str = "") -> dict:
     """
     Analyze a newspaper page.
+    - If `extracted_text` contains a 'Select <Section>' header → return immediately, no AI needed.
     - If `extracted_text` is provided (digital PDF): use DeepSeek text classification.
     - Otherwise: send the image to Qwen VL 72B vision.
     - Final fallback: Google Gemini.
     """
+    # Hard guard — 'Select News / Business / Sport / Vibez! / AgriToday' is the
+    # authoritative section header printed on every New Era page.  Trust it
+    # completely — do NOT let any AI model override it.
+    if extracted_text:
+        locked_section = _check_select_header(extracted_text)
+        if locked_section:
+            logger.info(
+                "analyze_page: Select-header locked section → %s (skipping AI)", locked_section
+            )
+            return {
+                "page_number": 0,
+                "section":     locked_section,
+                "headline":    "",
+                "tags":        [],
+            }
+
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 
     if openrouter_key:

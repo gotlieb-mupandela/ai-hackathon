@@ -32,7 +32,7 @@ export default function SubscriberPanel() {
     const status = err?.response?.status;
     const data   = err?.response?.data;
     const detail = data?.detail;
-    if (status === 404) return 'Subscriber API not found — start the Python backend on port 8000.';
+    if (status === 404) return 'Subscriber API not found — start the Python backend on port 8001.';
     if (detail) return Array.isArray(detail) ? detail.map((d) => d.msg).join(', ') : String(detail);
     if (typeof data === 'string') return data;
     return err?.message || fallback;
@@ -52,7 +52,7 @@ export default function SubscriberPanel() {
     } catch (err) {
       setError(
         err?.message === 'Network Error'
-          ? 'Cannot reach backend — make sure the Python server is running on port 8000.'
+          ? 'Cannot reach backend — make sure the Python server is running on port 8001.'
           : getErrorMessage(err, 'Could not load subscribers')
       );
     } finally {
@@ -78,7 +78,7 @@ export default function SubscriberPanel() {
     } catch (err) {
       setError(
         err?.message === 'Network Error'
-          ? 'Cannot reach backend — make sure the Python server is running on port 8000.'
+          ? 'Cannot reach backend — make sure the Python server is running on port 8001.'
           : getErrorMessage(err, 'Failed to add subscriber')
       );
     } finally {

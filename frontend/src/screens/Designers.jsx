@@ -8,7 +8,7 @@ import axios from 'axios';
 import { getSupabaseClient } from '../lib/supabase';
 import './Designers.css';
 
-const BACKEND = 'http://localhost:8000';
+const BACKEND = 'http://localhost:8001';
 
 export default function Designers() {
   const [designers, setDesigners]     = useState([]);

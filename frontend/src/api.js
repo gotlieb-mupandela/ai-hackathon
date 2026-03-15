@@ -8,7 +8,7 @@ import axios from 'axios';
 import { getSupabaseClient } from './lib/supabase';
 
 // Python backend — PDF analysis + WhatsApp notifications
-const ANALYZER_URL = 'http://localhost:8000';
+const ANALYZER_URL = 'http://localhost:8001';
 
 const analyzer = axios.create({
   baseURL: ANALYZER_URL,

@@ -12,9 +12,33 @@ import {
 import { useAuth } from '../context/AuthContext';
 import './Upload.css';
 
+const SECTIONS = ['News', 'Business', 'Sport', 'Vibez!', 'AgriToday'];
+
+const SECTION_COLORS = {
+  News:      { bg: '#ede9fe', color: '#5b21b6' },
+  Business:  { bg: '#dcfce7', color: '#166534' },
+  Sport:     { bg: '#dbeafe', color: '#1d4ed8' },
+  'Vibez!':  { bg: '#fce7f3', color: '#9d174d' },
+  AgriToday: { bg: '#fef9c3', color: '#854d0e' },
+};
+
 /**
- * Ordered keyword → section pairs for instant in-browser classification.
- * Most-specific keywords come first to prevent false positives.
+ * Step 1 — check the filename itself for a section keyword.
+ * Handles names like: Select News.pdf, SelectBusiness.pdf, NE_sport_05.pdf, vibez.pdf
+ */
+function detectSectionFromFilename(filename) {
+  const name = filename.replace(/\.pdf$/i, '').toLowerCase();
+  if (name.includes('agritoday') || name.includes('agri'))  return 'AgriToday';
+  if (name.includes('vibez'))                               return 'Vibez!';
+  if (name.includes('business'))                            return 'Business';
+  if (name.includes('sport'))                               return 'Sport';
+  if (name.includes('news'))                                return 'News';
+  return null;
+}
+
+/**
+ * Ordered keyword → section pairs used when reading text inside a PDF.
+ * Most-specific terms first to avoid false positives.
  */
 const SECTION_TEXT_KEYWORDS = [
   // AgriToday
@@ -48,7 +72,7 @@ const SECTION_TEXT_KEYWORDS = [
   ['league','Sport'],['tournament','Sport'],['fixture','Sport'],
   ['stadium','Sport'],['goal','Sport'],['kick-off','Sport'],
   ['handball','Sport'],['netball','Sport'],
-  // News (catch-all — must be last)
+  // News (catch-all — last)
   ['news','News'],['namibia','News'],['government','News'],['parliament','News'],
   ['minister','News'],['president','News'],['police','News'],['court','News'],
   ['crime','News'],['election','News'],['municipality','News'],['health','News'],
@@ -56,16 +80,28 @@ const SECTION_TEXT_KEYWORDS = [
   ['legislation','News'],['region','News'],
 ];
 
-/** Classify section from raw PDF text (lowercase). Returns null if no match. */
+/**
+ * Step 2 — classify from text inside the PDF.
+ * "Select X" headers printed at the top of a page take highest priority.
+ */
 function classifySectionFromText(text) {
   const lower = text.toLowerCase();
+
+  // Highest priority: exact "Select <Section>" headers printed on the page
+  if (lower.includes('select agritoday') || lower.includes('select agri today')) return 'AgriToday';
+  if (lower.includes('select vibez'))    return 'Vibez!';
+  if (lower.includes('select business')) return 'Business';
+  if (lower.includes('select sport'))    return 'Sport';
+  if (lower.includes('select news'))     return 'News';
+
+  // Fallback: general keyword scan
   for (const [keyword, section] of SECTION_TEXT_KEYWORDS) {
     if (lower.includes(keyword)) return section;
   }
   return null;
 }
 
-/** Extract text from first page of a PDF File using pdfjs-dist. */
+/** Extract embedded text from first page of a PDF (digital PDFs only). */
 async function extractTextFromPdf(file) {
   try {
     const pdfjsLib = await import('pdfjs-dist');
@@ -108,6 +144,68 @@ function extractPageNumberFromFilename(filename) {
 function getTodayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Inline badge that doubles as a section selector dropdown. */
+function SectionBadge({ page, onSectionChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const current = page.section || null;
+  const style = SECTION_COLORS[current] || { bg: '#f3f4f6', color: '#6b7280' };
+
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', alignSelf: 'center' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Click to change section"
+        style={{
+          fontSize: '12px', fontWeight: '600',
+          padding: '2px 8px', borderRadius: '12px',
+          background: style.bg, color: style.color,
+          border: 'none', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: '4px',
+        }}
+      >
+        {current || 'Unclassified'}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '110%', left: 0, zIndex: 999,
+          background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden', minWidth: '130px',
+        }}>
+          {SECTIONS.map(s => {
+            const sc = SECTION_COLORS[s];
+            return (
+              <button
+                key={s}
+                onClick={() => { setOpen(false); onSectionChange(s); }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '7px 12px', border: 'none', cursor: 'pointer',
+                  fontSize: '12px', fontWeight: '600',
+                  background: current === s ? sc.bg : '#fff',
+                  color: sc.color,
+                  borderLeft: current === s ? `3px solid ${sc.color}` : '3px solid transparent',
+                }}
+              >
+                {s}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Upload() {
@@ -187,10 +285,14 @@ export default function Upload() {
           uploaded_by: user?.email || 'unknown',
         });
 
-        // ── Auto-classify: extract text from the PDF and detect section ───
+        // ── Auto-classify: filename first, then PDF text as fallback ──────
         setUploadingFiles((prev) => ({ ...prev, [file.name]: 'analysing' }));
-        const pdfText = await extractTextFromPdf(file);
-        const detectedSection = classifySectionFromText(pdfText);
+        const filenameSection = detectSectionFromFilename(file.name);
+        let detectedSection = filenameSection;
+        if (!detectedSection) {
+          const pdfText = await extractTextFromPdf(file);
+          detectedSection = classifySectionFromText(pdfText);
+        }
 
         if (detectedSection && newPage?.id) {
           await updatePage(newPage.id, {
@@ -391,28 +493,14 @@ export default function Upload() {
                 <span className="file-page-num">
                   {page.page_number != null ? `p${page.page_number}` : '—'}
                 </span>
-                <span style={{
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  padding: '2px 8px',
-                  borderRadius: '12px',
-                  background: page.section === 'Sport' ? '#dbeafe'
-                    : page.section === 'Business' ? '#dcfce7'
-                    : page.section === 'Vibez!' ? '#fce7f3'
-                    : page.section === 'AgriToday' ? '#fef9c3'
-                    : page.section === 'News' ? '#ede9fe'
-                    : '#f3f4f6',
-                  color: page.section === 'Sport' ? '#1d4ed8'
-                    : page.section === 'Business' ? '#166534'
-                    : page.section === 'Vibez!' ? '#9d174d'
-                    : page.section === 'AgriToday' ? '#854d0e'
-                    : page.section === 'News' ? '#5b21b6'
-                    : '#6b7280',
-                  alignSelf: 'center',
-                  width: 'fit-content',
-                }}>
-                  {page.section || 'Unclassified'}
-                </span>
+                <SectionBadge page={page} onSectionChange={async (newSection) => {
+                  try {
+                    await updatePage(page.id, { section: newSection });
+                    fetchPages();
+                  } catch {
+                    showToast('Failed to update section', 'error');
+                  }
+                }} />
                 <span className="file-time mono">
                   {page.uploaded_at ? new Date(page.uploaded_at).toLocaleTimeString() : '—'}
                 </span>
