@@ -729,7 +729,7 @@ node server.js`}</CodeBlock>
               [
                 'Designer cannot see their uploads',
                 'RLS filtering by email not matching',
-                'Ensure the designer's email in the designers table exactly matches their auth email (case-sensitive).',
+                'Ensure the designer\u2019s email in the designers table exactly matches their auth email (case-sensitive).',
               ],
             ]}
           />
