@@ -17,6 +17,7 @@ import Periods from './screens/Periods';
 import Payments from './screens/Payments';
 import Users from './screens/Users';
 import AIAgent from './screens/AIAgent';
+import Documentation from './screens/Documentation';
 import Login from './screens/Login';
 import './App.css';
 
@@ -91,6 +92,7 @@ function PrivateLayout() {
                 <Route path="/management/periods" element={<Periods />} />
                 <Route path="/payments" element={<Payments />} />
                 <Route path="/agent" element={<AIAgent />} />
+                <Route path="/docs" element={<Documentation />} />
               </>
             )}
             <Route path="/designer-dashboard" element={<DesignerDashboard />} />

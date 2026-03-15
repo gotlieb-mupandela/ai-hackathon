@@ -1,0 +1,347 @@
+/* ── Root layout ─────────────────────────────────────────────────────────── */
+.doc-root {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg, #f9fafb);
+  font-family: var(--font, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+/* ── Sidebar nav ─────────────────────────────────────────────────────────── */
+.doc-nav {
+  width: 240px;
+  min-width: 240px;
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.doc-nav-header {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.doc-nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-nav-logo-icon {
+  font-size: 26px;
+}
+
+.doc-nav-logo-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.doc-nav-logo-sub {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 1px;
+}
+
+.doc-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 8px;
+  flex: 1;
+}
+
+.doc-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 13.5px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  margin-bottom: 2px;
+}
+
+.doc-nav-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.doc-nav-item.active {
+  background: #ede9fe;
+  color: #5b21b6;
+  font-weight: 600;
+}
+
+.doc-nav-footer {
+  padding: 14px 16px;
+  border-top: 1px solid #f3f4f6;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* ── Main content ────────────────────────────────────────────────────────── */
+.doc-main {
+  flex: 1;
+  padding: 40px 48px;
+  max-width: 900px;
+  overflow-y: auto;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+.doc-hero {
+  margin-bottom: 48px;
+  padding-bottom: 32px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.doc-hero-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #111827;
+  margin: 12px 0 10px;
+  line-height: 1.2;
+}
+
+.doc-hero-sub {
+  font-size: 16px;
+  color: #6b7280;
+  line-height: 1.7;
+  max-width: 680px;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+.doc-section {
+  margin-bottom: 56px;
+  scroll-margin-top: 24px;
+}
+
+.doc-section-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 20px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.doc-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+  margin: 24px 0 10px;
+}
+
+.doc-section p {
+  color: #4b5563;
+  line-height: 1.75;
+  margin-bottom: 10px;
+  font-size: 14.5px;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+.doc-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  margin: 14px 0 20px;
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.doc-table th {
+  background: #f9fafb;
+  padding: 11px 14px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.doc-table td {
+  padding: 10px 14px;
+  color: #4b5563;
+  border-bottom: 1px solid #f3f4f6;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.doc-table tr:last-child td {
+  border-bottom: none;
+}
+
+.doc-table tr:hover td {
+  background: #fafafa;
+}
+
+/* ── Code ────────────────────────────────────────────────────────────────── */
+.doc-code-wrap {
+  position: relative;
+  margin: 14px 0 20px;
+  border-radius: 10px;
+  background: #1e1e2e;
+  overflow: hidden;
+}
+
+.doc-code {
+  margin: 0;
+  padding: 18px 20px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #cdd6f4;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.doc-copy-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.1);
+  color: #cdd6f4;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+
+.doc-copy-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* Inline code */
+.doc-section code {
+  background: #f3f4f6;
+  color: #5b21b6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ── Steps ───────────────────────────────────────────────────────────────── */
+.doc-step {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 18px;
+  align-items: flex-start;
+}
+
+.doc-step-num {
+  min-width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #5b21b6;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.doc-step-body {
+  flex: 1;
+}
+
+.doc-step-title {
+  display: block;
+  font-size: 15px;
+  color: #111827;
+  margin-bottom: 4px;
+}
+
+.doc-step-body p {
+  margin: 0 0 8px;
+}
+
+/* ── Flow diagram ────────────────────────────────────────────────────────── */
+.doc-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  margin: 16px 0 24px;
+  max-width: 520px;
+}
+
+.doc-flow-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-radius: 10px;
+  width: 100%;
+  font-size: 14px;
+  color: #111827;
+  font-weight: 500;
+}
+
+.doc-flow-icon {
+  font-size: 20px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.doc-flow-arrow {
+  position: absolute;
+  bottom: -18px;
+  left: 28px;
+  font-size: 18px;
+  color: #9ca3af;
+  z-index: 1;
+}
+
+/* ── List ────────────────────────────────────────────────────────────────── */
+.doc-list {
+  padding-left: 20px;
+  margin: 8px 0 16px;
+}
+
+.doc-list li {
+  color: #4b5563;
+  line-height: 1.8;
+  font-size: 14.5px;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
+.doc-footer {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 24px;
+  margin-top: 40px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .doc-nav {
+    display: none;
+  }
+  .doc-main {
+    padding: 24px 20px;
+  }
+  .doc-hero-title {
+    font-size: 24px;
+  }
+}
