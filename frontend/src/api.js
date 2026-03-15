@@ -88,7 +88,13 @@ export const toggleAutoSend = async () => {
 };
 
 export const notifySubscribers = async (editionDate) => {
-  const res = await analyzer.post('/notify-subscribers', { edition_date: editionDate });
+  // WhatsApp delivery runs in the background — use a short timeout so it
+  // never blocks the pipeline UI.  If the agent is not running it fails fast.
+  const res = await analyzer.post(
+    '/notify-subscribers',
+    { edition_date: editionDate },
+    { timeout: 15000 }  // 15 s — agent health check + queue, not actual delivery
+  );
   return res.data;
 };
 

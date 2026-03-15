@@ -570,20 +570,21 @@ export default function Pipeline() {
       setIsComplete(true);
       addLog('=== Pipeline complete — edition published ===');
 
-      // Send WhatsApp notifications — auto-open each link in a new tab
+      // Send WhatsApp notifications — non-blocking, runs in background
       try {
-        addLog('Sending WhatsApp notifications to subscribers...');
+        addLog('Triggering WhatsApp notifications...');
         const notifyResult = await notifySubscribers(todayStr);
 
-        if (notifyResult.status === 'sent') {
-          addLog(`WhatsApp messages sent via API: ${notifyResult.sent} delivered, ${notifyResult.failed} failed`);
+        if (notifyResult.status === 'queued') {
+          addLog('WhatsApp delivery started in background — messages will arrive shortly.');
+        } else if (notifyResult.status === 'sent') {
+          addLog(`WhatsApp: ${notifyResult.sent} sent, ${notifyResult.failed} failed.`);
         } else if (notifyResult.status === 'links' && notifyResult.links?.length > 0) {
-          addLog(`Opening ${notifyResult.links.length} WhatsApp message(s) automatically...`);
+          addLog(`Opening ${notifyResult.links.length} WhatsApp link(s)...`);
           for (let i = 0; i < notifyResult.links.length; i++) {
             const entry = notifyResult.links[i];
             addLog(`  Opening WhatsApp for ${entry.phone} [${entry.sections.join(', ')}]`);
             window.open(entry.link, '_blank');
-            // Stagger tab opens so WhatsApp Web doesn't choke
             if (i < notifyResult.links.length - 1) {
               await new Promise(r => setTimeout(r, 3000));
             }
@@ -591,9 +592,16 @@ export default function Pipeline() {
           addLog('All WhatsApp tabs opened — press Send in each tab.');
         } else if (notifyResult.skipped) {
           addLog('WhatsApp auto-send is disabled — skipped.');
+        } else {
+          addLog('WhatsApp agent not running — start it with: cd whatsapp-agent && node server.js');
         }
       } catch (err) {
-        addLog(`[WARN] WhatsApp notifications failed: ${err.message} (edition was still published successfully)`);
+        // Don't let WhatsApp failure affect the published edition message
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+          addLog('WhatsApp agent not reachable — scan the QR code first, then republish to send.');
+        } else {
+          addLog(`[WARN] WhatsApp skipped: ${err.message}`);
+        }
       }
 
     } catch (err) {

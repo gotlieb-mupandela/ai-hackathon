@@ -717,27 +717,34 @@ async def notify_subscribers(body: NotifyBody):
         agent_ready = False
 
     if agent_ready:
-        # Send via local WhatsApp agent (downloads PDFs from Supabase and sends)
-        try:
-            supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-            resp = _req.post(
-                "http://localhost:5000/send",
-                json={"edition_date": body.edition_date, "supabase_url": supabase_url},
-                timeout=300
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.info("WhatsApp agent sent: %d, failed: %d", data.get("sent", 0), data.get("failed", 0))
-            return {
-                "status": "sent",
-                "sent": data.get("sent", 0),
-                "failed": data.get("failed", 0),
-                "using_api": True,
-                "edition_date": body.edition_date
-            }
-        except Exception as exc:
-            logger.error("WhatsApp agent failed: %s", exc)
-            # Fall through to wa.me links
+        # Fire-and-forget: trigger the agent then return immediately so the
+        # frontend is never blocked waiting for all messages to be delivered.
+        def _fire_agent():
+            try:
+                supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+                resp = _req.post(
+                    "http://localhost:5000/send",
+                    json={"edition_date": body.edition_date, "supabase_url": supabase_url},
+                    timeout=600,  # 10 min for large subscriber lists
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                logger.info(
+                    "WhatsApp agent delivery complete: %d sent, %d failed",
+                    data.get("sent", 0), data.get("failed", 0),
+                )
+            except Exception as bg_exc:
+                logger.error("WhatsApp agent background send failed: %s", bg_exc)
+
+        import threading
+        threading.Thread(target=_fire_agent, daemon=True).start()
+        logger.info("WhatsApp agent triggered (background) for edition %s", body.edition_date)
+        return {
+            "status": "queued",
+            "message": "WhatsApp delivery started in background",
+            "using_api": True,
+            "edition_date": body.edition_date,
+        }
 
     # Fallback: generate wa.me links
     try:
